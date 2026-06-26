@@ -147,7 +147,21 @@ html[data-mode="light"] {
 
 /* ---- ACCENT: primary color ---- */
 
+/* Frater Tech — índigo profundo (#6f63ff ≈ oklch 0.57 0.24 283) */
 :root,
+html[data-theme="frater"] {
+  --primary: oklch(0.57 0.24 283);
+  --primary-foreground: oklch(0.985 0 0);
+  --primary-hover: oklch(0.64 0.22 283);
+  --primary-soft: oklch(0.57 0.24 283 / 0.12);
+  --primary-soft-2: oklch(0.57 0.24 283 / 0.22);
+  --ring: oklch(0.57 0.24 283);
+  --chart-1: oklch(0.57 0.24 283);
+  --sidebar-primary: oklch(0.57 0.24 283);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-ring: oklch(0.57 0.24 283);
+}
+
 html[data-theme="violet"] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);

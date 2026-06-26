@@ -1,29 +1,10 @@
 {
-  "name": "wacrm",
-  "version": "0.2.2",
+  "name": "frater-crm",
+  "version": "1.0.0",
   "private": true,
-  "description": "Self-hostable CRM template for WhatsApp built on Next.js and Supabase — shared inbox, contacts, sales pipelines, broadcasts, and no-code automations.",
+  "description": "CRM exclusivo da Frater Tech para WhatsApp Business — caixa de entrada compartilhada, contatos, pipelines de vendas, broadcasts e automações.",
   "license": "MIT",
-  "author": "Arnas Donauskas",
-  "homepage": "https://github.com/ArnasDon/wacrm",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ArnasDon/wacrm.git"
-  },
-  "bugs": {
-    "url": "https://github.com/ArnasDon/wacrm/issues"
-  },
-  "keywords": [
-    "crm",
-    "whatsapp",
-    "whatsapp-business-api",
-    "nextjs",
-    "supabase",
-    "automation",
-    "broadcast",
-    "self-hosted",
-    "template"
-  ],
+  "author": "Frater Tech",
   "engines": {
     "node": ">=20.0.0"
   },
