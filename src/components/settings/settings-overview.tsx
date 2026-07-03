@@ -6,6 +6,8 @@ import { ChevronRight, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
+import { useTranslation } from '@/lib/i18n/use-translation';
+import { LOCALES } from '@/lib/i18n/locales';
 import { THEMES } from '@/lib/themes';
 import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -38,6 +40,7 @@ export function SettingsOverview({
   const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
     useAuth();
   const { mode, theme } = useTheme();
+  const { locale, t } = useTranslation();
 
   const [counts, setCounts] = useState<OverviewCounts | null>(null);
   const [countsLoading, setCountsLoading] = useState(true);
@@ -144,8 +147,9 @@ export function SettingsOverview({
 
   const currencyLabel =
     CURRENCIES.find((c) => c.code === defaultCurrency)?.label ?? defaultCurrency;
-  const themeName = THEMES.find((t) => t.id === theme)?.name ?? theme;
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const themeName = THEMES.find((th) => th.id === theme)?.name ?? theme;
+  const modeLabel = t(mode === 'light' ? 'settings.appearance.modeLight' : 'settings.appearance.modeDark');
+  const localeName = LOCALES.find((l) => l.id === locale)?.name ?? locale;
 
   // Per-tile loading + subtitle. `null` counts render as a graceful
   // fallback so a single failed query never blanks a tile.
@@ -158,14 +162,14 @@ export function SettingsOverview({
       section: 'whatsapp',
       loading: whatsappLoading,
       subtitle: !whatsapp?.configured ? (
-        'Not set up yet'
+        t('settings.overview.whatsappNotSetUp')
       ) : whatsapp.connected ? (
         <>
-          <StatusDot tone="ok" /> Connected
+          <StatusDot tone="ok" /> {t('settings.overview.whatsappConnected')}
         </>
       ) : (
         <>
-          <StatusDot tone="muted" /> Needs reconnecting
+          <StatusDot tone="muted" /> {t('settings.overview.whatsappNeedsReconnect')}
         </>
       ),
     },
@@ -174,12 +178,18 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.members == null
-          ? 'View team members'
-          : `${counts.members} member${counts.members === 1 ? '' : 's'}${
+          ? t('settings.overview.membersViewTeam')
+          : `${t(
+              counts.members === 1 ? 'settings.overview.memberCount' : 'settings.overview.memberCountPlural',
+              { count: counts.members },
+            )}${
               counts.pendingInvites
-                ? ` · ${counts.pendingInvites} pending invite${
-                    counts.pendingInvites === 1 ? '' : 's'
-                  }`
+                ? ` · ${t(
+                    counts.pendingInvites === 1
+                      ? 'settings.overview.pendingInvite'
+                      : 'settings.overview.pendingInvitePlural',
+                    { count: counts.pendingInvites },
+                  )}`
                 : ''
             }`,
     },
@@ -188,10 +198,13 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.templates == null
-          ? 'Manage message templates'
-          : `${counts.templates} template${counts.templates === 1 ? '' : 's'}${
+          ? t('settings.overview.templatesManage')
+          : `${t(
+              counts.templates === 1 ? 'settings.overview.templateCount' : 'settings.overview.templateCountPlural',
+              { count: counts.templates },
+            )}${
               counts.templatesPending
-                ? ` · ${counts.templatesPending} pending review`
+                ? ` · ${t('settings.overview.templatesPendingReview', { count: counts.templatesPending })}`
                 : ''
             }`,
     },
@@ -205,15 +218,26 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.tags == null && counts?.customFields == null
-          ? 'Tags and custom fields'
-          : `${counts?.tags ?? 0} tag${counts?.tags === 1 ? '' : 's'} · ${
-              counts?.customFields ?? 0
-            } custom field${counts?.customFields === 1 ? '' : 's'}`,
+          ? t('settings.overview.fieldsTagsDefault')
+          : `${t(
+              counts?.tags === 1 ? 'settings.overview.tagCount' : 'settings.overview.tagCountPlural',
+              { count: counts?.tags ?? 0 },
+            )} · ${t(
+              counts?.customFields === 1
+                ? 'settings.overview.customFieldCount'
+                : 'settings.overview.customFieldCountPlural',
+              { count: counts?.customFields ?? 0 },
+            )}`,
     },
     {
       section: 'appearance',
       loading: false,
-      subtitle: `${cap(mode)} mode · ${themeName} accent`,
+      subtitle: t('settings.overview.appearanceSubtitle', { mode: modeLabel, theme: themeName }),
+    },
+    {
+      section: 'language',
+      loading: false,
+      subtitle: localeName,
     },
   ];
 
@@ -267,12 +291,12 @@ export function SettingsOverview({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold text-foreground">
-                  {meta.label}
+                  {t(meta.label)}
                 </span>
                 <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                   {loading ? (
                     <>
-                      <Loader2 className="size-3 animate-spin" /> Loading…
+                      <Loader2 className="size-3 animate-spin" /> {t('settings.overview.loading')}
                     </>
                   ) : (
                     subtitle

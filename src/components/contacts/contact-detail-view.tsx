@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useTranslation } from '@/lib/i18n/use-translation';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
+import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, Task } from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -33,6 +34,8 @@ import {
   Save,
   X,
   DollarSign,
+  Circle,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface ContactDetailViewProps {
@@ -50,6 +53,7 @@ export function ContactDetailView({
 }: ContactDetailViewProps) {
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
+  const { t, locale } = useTranslation();
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,6 +86,13 @@ export function ContactDetailView({
   // Deals tab
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loadingDeals, setLoadingDeals] = useState(false);
+
+  // Tasks tab
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDueAt, setNewTaskDueAt] = useState('');
+  const [savingTask, setSavingTask] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(false);
 
   const fetchContact = useCallback(async () => {
     if (!contactId) return;
@@ -166,6 +177,22 @@ export function ContactDetailView({
     setLoadingDeals(false);
   }, [contactId, supabase]);
 
+  const fetchTasks = useCallback(async () => {
+    if (!contactId) return;
+    setLoadingTasks(true);
+
+    const { data } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('contact_id', contactId)
+      .order('completed_at', { ascending: true, nullsFirst: true })
+      .order('due_at', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: false });
+
+    if (data) setTasks(data);
+    setLoadingTasks(false);
+  }, [contactId, supabase]);
+
   useEffect(() => {
     if (open && contactId) {
       fetchContact();
@@ -173,8 +200,9 @@ export function ContactDetailView({
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
+      fetchTasks();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchTasks]);
 
   async function copyPhone() {
     if (!contact) return;
@@ -185,7 +213,7 @@ export function ContactDetailView({
 
   async function saveDetails() {
     if (!contactId || !editPhone.trim()) {
-      toast.error('Phone number is required');
+      toast.error(t('contacts.detail.errorPhoneRequired'));
       return;
     }
 
@@ -202,9 +230,9 @@ export function ContactDetailView({
       .eq('id', contactId);
 
     if (error) {
-      toast.error('Failed to update contact');
+      toast.error(t('contacts.detail.errorUpdateContact'));
     } else {
-      toast.success('Contact updated');
+      toast.success(t('contacts.detail.updated'));
       fetchContact();
       onUpdated();
     }
@@ -248,7 +276,7 @@ export function ContactDetailView({
     } = await supabase.auth.getSession();
     const user = session?.user;
     if (!user || !accountId) {
-      toast.error('Not authenticated');
+      toast.error(t('contacts.detail.errorNotAuthenticated'));
       setSavingNote(false);
       return;
     }
@@ -261,11 +289,11 @@ export function ContactDetailView({
     });
 
     if (error) {
-      toast.error('Failed to add note');
+      toast.error(t('contacts.detail.errorAddNote'));
     } else {
       setNewNote('');
       fetchNotes();
-      toast.success('Note added');
+      toast.success(t('contacts.detail.noteAdded'));
     }
     setSavingNote(false);
   }
@@ -277,10 +305,67 @@ export function ContactDetailView({
       .eq('id', noteId);
 
     if (error) {
-      toast.error('Failed to delete note');
+      toast.error(t('contacts.detail.errorDeleteNote'));
     } else {
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
-      toast.success('Note deleted');
+      toast.success(t('contacts.detail.noteDeleted'));
+    }
+  }
+
+  async function addTask() {
+    if (!contactId || !newTaskTitle.trim()) return;
+    setSavingTask(true);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const user = session?.user;
+    if (!user || !accountId) {
+      toast.error(t('tasks.errorNotAuthenticated'));
+      setSavingTask(false);
+      return;
+    }
+
+    const { error } = await supabase.from('tasks').insert({
+      contact_id: contactId,
+      account_id: accountId,
+      created_by: user.id,
+      title: newTaskTitle.trim(),
+      due_at: newTaskDueAt ? new Date(newTaskDueAt).toISOString() : null,
+    });
+
+    if (error) {
+      toast.error(t('tasks.errorAdd'));
+    } else {
+      setNewTaskTitle('');
+      setNewTaskDueAt('');
+      fetchTasks();
+      toast.success(t('tasks.added'));
+    }
+    setSavingTask(false);
+  }
+
+  async function toggleTaskComplete(task: Task) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ completed_at: task.completed_at ? null : new Date().toISOString() })
+      .eq('id', task.id);
+
+    if (error) {
+      toast.error(t('tasks.errorUpdate'));
+    } else {
+      fetchTasks();
+    }
+  }
+
+  async function deleteTask(taskId: string) {
+    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+
+    if (error) {
+      toast.error(t('tasks.errorDelete'));
+    } else {
+      setTasks((prev) => prev.filter((task) => task.id !== taskId));
+      toast.success(t('tasks.deleted'));
     }
   }
 
@@ -310,9 +395,9 @@ export function ContactDetailView({
         if (error) throw error;
       }
 
-      toast.success('Custom fields saved');
+      toast.success(t('contacts.detail.customFieldsSaved'));
     } catch {
-      toast.error('Failed to save custom fields');
+      toast.error(t('contacts.detail.errorSaveCustomFields'));
     }
     setSavingCustom(false);
   }
@@ -349,10 +434,10 @@ export function ContactDetailView({
                 </Avatar>
                 <div className="flex-1 min-w-0">
                   <SheetTitle className="text-popover-foreground truncate">
-                    {contact.name || 'Unknown'}
+                    {contact.name || t('contacts.detail.unknown')}
                   </SheetTitle>
                   <SheetDescription className="text-muted-foreground text-xs mt-0.5">
-                    Contact details
+                    {t('contacts.detail.subtitle')}
                   </SheetDescription>
                   <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     <button
@@ -391,31 +476,37 @@ export function ContactDetailView({
                   value="details"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Details
+                  {t('contacts.detail.tabDetails')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="tags"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Tags
+                  {t('contacts.detail.tabTags')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="notes"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Notes
+                  {t('contacts.detail.tabNotes')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="custom"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Custom Fields
+                  {t('contacts.detail.tabCustomFields')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="deals"
                   className="data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
-                  Deals
+                  {t('contacts.detail.tabDeals')}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="tasks"
+                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                >
+                  {t('tasks.tab')}
                 </TabsTrigger>
               </TabsList>
 
@@ -423,7 +514,7 @@ export function ContactDetailView({
               <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Name</Label>
+                    <Label className="text-muted-foreground text-xs">{t('contacts.form.name')}</Label>
                     <Input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -432,7 +523,7 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      Phone <span className="text-red-400">*</span>
+                      {t('contacts.page.colPhone')} <span className="text-red-400">*</span>
                     </Label>
                     <Input
                       value={editPhone}
@@ -441,7 +532,7 @@ export function ContactDetailView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Email</Label>
+                    <Label className="text-muted-foreground text-xs">{t('contacts.page.colEmail')}</Label>
                     <Input
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
@@ -449,7 +540,7 @@ export function ContactDetailView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">Company</Label>
+                    <Label className="text-muted-foreground text-xs">{t('contacts.form.companyLabel')}</Label>
                     <Input
                       value={editCompany}
                       onChange={(e) => setEditCompany(e.target.value)}
@@ -467,7 +558,7 @@ export function ContactDetailView({
                     ) : (
                       <Save className="size-3.5" />
                     )}
-                    Save Changes
+                    {t('contacts.detail.saveChanges')}
                   </Button>
                 </div>
               </TabsContent>
@@ -476,11 +567,11 @@ export function ContactDetailView({
               <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground">
-                    Click a tag to add or remove it from this contact.
+                    {t('contacts.detail.tagsHint')}
                   </p>
                   {allTags.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No tags available. Create tags in Settings.
+                      {t('contacts.detail.noTagsAvailable')}
                     </p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
@@ -517,7 +608,7 @@ export function ContactDetailView({
                   <Textarea
                     value={newNote}
                     onChange={(e) => setNewNote(e.target.value)}
-                    placeholder="Write a note..."
+                    placeholder={t('contacts.detail.notePlaceholder')}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
                   />
                   <Button
@@ -531,7 +622,7 @@ export function ContactDetailView({
                     ) : (
                       <Plus className="size-3.5" />
                     )}
-                    Add Note
+                    {t('contacts.detail.addNote')}
                   </Button>
                 </div>
 
@@ -542,7 +633,7 @@ export function ContactDetailView({
                     </div>
                   ) : notes.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      No notes yet.
+                      {t('contacts.detail.noNotesYet')}
                     </p>
                   ) : (
                     notes.map((note) => (
@@ -562,13 +653,16 @@ export function ContactDetailView({
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1.5">
-                          {new Date(note.created_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {new Date(note.created_at).toLocaleDateString(
+                            locale === 'pt-BR' ? 'pt-BR' : 'en-US',
+                            {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            },
+                          )}
                         </p>
                       </div>
                     ))
@@ -584,7 +678,7 @@ export function ContactDetailView({
                   </div>
                 ) : customFields.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">
-                    No custom fields defined. Create them in Settings.
+                    {t('contacts.detail.noCustomFields')}
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -601,7 +695,7 @@ export function ContactDetailView({
                               [field.id]: e.target.value,
                             }))
                           }
-                          placeholder={`Enter ${field.field_name}...`}
+                          placeholder={t('contacts.detail.enterFieldPlaceholder', { field: field.field_name })}
                           className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
                         />
                       </div>
@@ -617,7 +711,7 @@ export function ContactDetailView({
                       ) : (
                         <Save className="size-3.5" />
                       )}
-                      Save Custom Fields
+                      {t('contacts.detail.saveCustomFields')}
                     </Button>
                   </div>
                 )}
@@ -630,7 +724,7 @@ export function ContactDetailView({
                     <Loader2 className="size-5 animate-spin text-primary" />
                   </div>
                 ) : deals.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No deals yet</p>
+                  <p className="text-xs text-muted-foreground">{t('contacts.detail.noDealsYet')}</p>
                 ) : (
                   <div className="space-y-2">
                     {deals.map((deal) => (
@@ -678,6 +772,116 @@ export function ContactDetailView({
                     ))}
                   </div>
                 )}
+              </TabsContent>
+
+              {/* Tasks Tab */}
+              <TabsContent value="tasks" className="flex-1 flex flex-col min-h-0 px-4 py-3">
+                <div className="space-y-2 mb-3">
+                  <Input
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    placeholder={t('tasks.titlePlaceholder')}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-sm"
+                  />
+                  <div className="space-y-1.5">
+                    <Label className="text-muted-foreground text-xs">
+                      {t('tasks.dueDateLabel')}
+                    </Label>
+                    <Input
+                      type="datetime-local"
+                      value={newTaskDueAt}
+                      onChange={(e) => setNewTaskDueAt(e.target.value)}
+                      className="bg-muted border-border text-foreground h-8 text-sm"
+                    />
+                  </div>
+                  <Button
+                    onClick={addTask}
+                    disabled={!newTaskTitle.trim() || savingTask}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                    size="sm"
+                  >
+                    {savingTask ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="size-3.5" />
+                    )}
+                    {t('tasks.addButton')}
+                  </Button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2">
+                  {loadingTasks ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : tasks.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      {t('tasks.emptyState')}
+                    </p>
+                  ) : (
+                    tasks.map((task) => {
+                      const isDone = !!task.completed_at;
+                      const isOverdue =
+                        !isDone && !!task.due_at && new Date(task.due_at) < new Date();
+                      return (
+                        <div
+                          key={task.id}
+                          className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-2 flex-1 min-w-0">
+                              <button
+                                onClick={() => toggleTaskComplete(task)}
+                                aria-label={t(
+                                  isDone ? 'tasks.markIncomplete' : 'tasks.markComplete',
+                                )}
+                                className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                              >
+                                {isDone ? (
+                                  <CheckCircle2 className="size-4 text-primary" />
+                                ) : (
+                                  <Circle className="size-4" />
+                                )}
+                              </button>
+                              <p
+                                className={`text-sm flex-1 min-w-0 break-words ${
+                                  isDone
+                                    ? 'text-muted-foreground line-through'
+                                    : 'text-foreground'
+                                }`}
+                              >
+                                {task.title}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => deleteTask(task.id)}
+                              aria-label={t('tasks.deleteTask')}
+                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          <p
+                            className={`text-xs mt-1.5 pl-6 ${
+                              isOverdue ? 'text-red-400' : 'text-muted-foreground'
+                            }`}
+                          >
+                            {task.due_at
+                              ? `${isOverdue ? `${t('tasks.overdue')} — ` : ''}${new Date(
+                                  task.due_at,
+                                ).toLocaleDateString(locale === 'pt-BR' ? 'pt-BR' : 'en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}`
+                              : t('tasks.noDueDate')}
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </TabsContent>
             </Tabs>
           </div>

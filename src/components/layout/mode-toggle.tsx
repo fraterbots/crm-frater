@@ -3,6 +3,7 @@
 import { Moon, Sun } from "lucide-react";
 
 import { useTheme } from "@/hooks/use-theme";
+import { useTranslation } from "@/lib/i18n/use-translation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,13 +16,14 @@ import { cn } from "@/lib/utils";
  */
 export function ModeToggle({ className }: { className?: string }) {
   const { mode, toggleMode } = useTheme();
-  const goingTo = mode === "dark" ? "light" : "dark";
+  const { t } = useTranslation();
+  const label = t(mode === "dark" ? "theme.switchToLight" : "theme.switchToDark");
   return (
     <button
       type="button"
       onClick={toggleMode}
-      aria-label={`Switch to ${goingTo} mode`}
-      title={`Switch to ${goingTo} mode`}
+      aria-label={label}
+      title={label}
       className={cn(
         "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
         className,

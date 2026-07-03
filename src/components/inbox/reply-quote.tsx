@@ -3,6 +3,8 @@
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/types";
+import { useTranslation } from "@/lib/i18n/use-translation";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 interface ReplyQuoteProps {
   /** Sender label of the quoted message: "You" for our own messages,
@@ -26,6 +28,7 @@ export function ReplyQuote({
   onDismiss,
   onPrimary = false,
 }: ReplyQuoteProps) {
+  const { t } = useTranslation();
   const isChip = !!onDismiss;
   return (
     <div
@@ -63,7 +66,7 @@ export function ReplyQuote({
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="Cancel reply"
+          aria-label={t("inbox.replyQuote.cancelReplyAria")}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" />
@@ -73,23 +76,33 @@ export function ReplyQuote({
   );
 }
 
-/** Build the one-line preview text shown inside a reply quote. */
-export function buildReplyPreview(message: Message): string {
+/**
+ * Build the one-line preview text shown inside a reply quote.
+ *
+ * `t` is optional: this is a plain (non-component) helper, so callers that
+ * have `useTranslation()` in scope should pass its `t` through for a
+ * localized preview; callers without it (e.g. non-component contexts) get
+ * the English fallback below, matching this function's previous behavior.
+ */
+export function buildReplyPreview(
+  message: Message,
+  t?: (key: TranslationKey) => string,
+): string {
   if (message.content_text) return message.content_text;
   switch (message.content_type) {
     case "image":
-      return "[Image]";
+      return t ? t("inbox.replyQuote.previewImage") : "[Image]";
     case "video":
-      return "[Video]";
+      return t ? t("inbox.replyQuote.previewVideo") : "[Video]";
     case "audio":
-      return "[Audio]";
+      return t ? t("inbox.replyQuote.previewAudio") : "[Audio]";
     case "document":
-      return "[Document]";
+      return t ? t("inbox.replyQuote.previewDocument") : "[Document]";
     case "location":
-      return "[Location]";
+      return t ? t("inbox.replyQuote.previewLocation") : "[Location]";
     case "template":
-      return "[Template]";
+      return t ? t("inbox.replyQuote.previewTemplate") : "[Template]";
     default:
-      return "[Message]";
+      return t ? t("inbox.replyQuote.previewMessage") : "[Message]";
   }
 }

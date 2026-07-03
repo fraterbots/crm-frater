@@ -12,6 +12,12 @@ import {
   STORAGE_KEY,
   THEME_IDS,
 } from "@/lib/themes";
+import { LocaleProvider } from "@/lib/i18n/use-translation";
+import {
+  DEFAULT_LOCALE,
+  LOCALE_IDS,
+  LOCALE_STORAGE_KEY,
+} from "@/lib/i18n/locales";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -68,9 +74,19 @@ const THEME_BOOT_SCRIPT = `
     var MODES = ${JSON.stringify(MODES)};
     var savedMode = localStorage.getItem(MODE_KEY);
     d.dataset.mode = MODES.indexOf(savedMode) !== -1 ? savedMode : MODE_DEFAULT;
+
+    var LOCALE_KEY = ${JSON.stringify(LOCALE_STORAGE_KEY)};
+    var LOCALE_DEFAULT = ${JSON.stringify(DEFAULT_LOCALE)};
+    var LOCALES = ${JSON.stringify(LOCALE_IDS)};
+    var savedLocale = localStorage.getItem(LOCALE_KEY);
+    var locale = LOCALES.indexOf(savedLocale) !== -1 ? savedLocale : LOCALE_DEFAULT;
+    d.dataset.locale = locale;
+    d.lang = locale;
   } catch (_e) {
     d.dataset.theme = ${JSON.stringify(DEFAULT_THEME)};
     d.dataset.mode = ${JSON.stringify(DEFAULT_MODE)};
+    d.dataset.locale = ${JSON.stringify(DEFAULT_LOCALE)};
+    d.lang = ${JSON.stringify(DEFAULT_LOCALE)};
   }
 })();
 `;
@@ -82,9 +98,10 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="pt-BR"
+      lang={DEFAULT_LOCALE}
       data-theme={DEFAULT_THEME}
       data-mode={DEFAULT_MODE}
+      data-locale={DEFAULT_LOCALE}
       className={`${inter.variable} h-full antialiased`}
       // The `theme-boot` script below rewrites `data-theme` and
       // `data-mode` on <html> from localStorage before React hydrates,
@@ -103,10 +120,12 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full bg-background text-foreground font-sans">
-        <ThemeProvider>
-          {children}
-          <ThemedToaster />
-        </ThemeProvider>
+        <LocaleProvider>
+          <ThemeProvider>
+            {children}
+            <ThemedToaster />
+          </ThemeProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

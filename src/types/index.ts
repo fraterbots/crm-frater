@@ -142,6 +142,21 @@ export interface ContactNote {
   created_at: string;
 }
 
+export interface Task {
+  id: string;
+  account_id: string;
+  contact_id: string | null;
+  deal_id: string | null;
+  assigned_to: string | null;
+  created_by: string | null;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ConversationStatus = 'open' | 'pending' | 'closed';
 
 export interface Conversation {

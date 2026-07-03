@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus } from "@/types";
 import { Search, ChevronDown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useTranslation } from "@/lib/i18n/use-translation";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -38,13 +40,33 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 
 type InboxFilter = ConversationStatus | "all" | "unread";
 
-const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
-  { label: "All", value: "all" },
-  { label: "Unread", value: "unread" },
-  { label: "Open", value: "open" },
-  { label: "Pending", value: "pending" },
-  { label: "Closed", value: "closed" },
-];
+const FILTER_VALUES: InboxFilter[] = ["all", "unread", "open", "pending", "closed"];
+
+function filterLabel(t: ReturnType<typeof useTranslation>["t"], value: InboxFilter): string {
+  switch (value) {
+    case "all":
+      return t("inbox.conversationList.filterAll");
+    case "unread":
+      return t("inbox.conversationList.filterUnread");
+    case "open":
+      return t("inbox.conversationList.filterOpen");
+    case "pending":
+      return t("inbox.conversationList.filterPending");
+    case "closed":
+      return t("inbox.conversationList.filterClosed");
+  }
+}
+
+function statusLabel(t: ReturnType<typeof useTranslation>["t"], status: ConversationStatus): string {
+  switch (status) {
+    case "open":
+      return t("inbox.conversationList.statusOpen");
+    case "pending":
+      return t("inbox.conversationList.statusPending");
+    case "closed":
+      return t("inbox.conversationList.statusClosed");
+  }
+}
 
 export function ConversationList({
   activeConversationId,
@@ -53,6 +75,7 @@ export function ConversationList({
   onConversationsLoaded,
   resyncToken = 0,
 }: ConversationListProps) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
@@ -146,8 +169,6 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
-
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
@@ -160,32 +181,32 @@ export function ConversationList({
           <Input
             value={search}
             onChange={handleSearchChange}
-            placeholder="Search conversations..."
+            placeholder={t("inbox.conversationList.searchPlaceholder")}
             className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
           />
         </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-              {activeFilter?.label ?? "All"}
+              {filterLabel(t, filter)}
               <ChevronDown className="h-3 w-3" />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
             className="border-border bg-popover"
           >
-            {FILTER_OPTIONS.map((opt) => (
+            {FILTER_VALUES.map((value) => (
               <DropdownMenuItem
-                key={opt.value}
-                onClick={() => setFilter(opt.value)}
+                key={value}
+                onClick={() => setFilter(value)}
                 className={cn(
                   "text-sm",
-                  filter === opt.value
+                  filter === value
                     ? "text-primary"
                     : "text-popover-foreground"
                 )}
               >
-                {opt.label}
+                {filterLabel(t, value)}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -205,7 +226,7 @@ export function ConversationList({
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">No conversations found</p>
+            <p className="text-sm text-muted-foreground">{t("inbox.conversationList.noConversationsFound")}</p>
           </div>
         ) : (
           <div className="flex flex-col">
@@ -235,8 +256,9 @@ function ConversationItem({
   isActive,
   onSelect,
 }: ConversationItemProps) {
+  const { t, locale } = useTranslation();
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || "Unknown";
+  const displayName = contact?.name || contact?.phone || t("inbox.conversationList.unknownContact");
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {
@@ -246,6 +268,7 @@ function ConversationItem({
   const timeAgo = conversation.last_message_at
     ? formatDistanceToNow(new Date(conversation.last_message_at), {
         addSuffix: false,
+        locale: locale === "pt-BR" ? ptBR : undefined,
       })
     : "";
 
@@ -280,7 +303,7 @@ function ConversationItem({
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || "No messages yet"}
+            {conversation.last_message_text || t("inbox.conversationList.noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {conversation.unread_count > 0 && (
@@ -293,7 +316,7 @@ function ConversationItem({
                 "h-2 w-2 rounded-full",
                 STATUS_COLORS[conversation.status]
               )}
-              title={conversation.status}
+              title={statusLabel(t, conversation.status)}
             />
           </div>
         </div>

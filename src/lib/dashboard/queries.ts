@@ -15,6 +15,8 @@ import type {
   PipelineStageSlice,
   ResponseTimeBucket,
   ResponseTimeSummary,
+  TaskDueItem,
+  TasksDueSummary,
 } from './types'
 
 // ------------------------------------------------------------
@@ -395,4 +397,56 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
   return items
     .sort((a, b) => (a.at > b.at ? -1 : a.at < b.at ? 1 : 0))
     .slice(0, limit)
+}
+
+// --- 6. Follow-up tasks due today / overdue -----------------------------
+
+export async function loadTasksDueSummary(db: DB, limit = 8): Promise<TasksDueSummary> {
+  const todayStart = startOfLocalDay()
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
+
+  // Pull every open task due today-or-earlier (uncapped save for a
+  // generous ceiling — matches the "cheap query" tradeoff the rest of
+  // this module makes; a tenant with hundreds of overdue tasks would
+  // want this moved to a SQL RPC, same note as elsewhere in this file).
+  const { data, error } = await db
+    .from('tasks')
+    .select('id, title, due_at, contact_id, contact:contacts(name, phone)')
+    .is('completed_at', null)
+    .not('due_at', 'is', null)
+    .lte('due_at', tomorrowStart.toISOString())
+    .order('due_at', { ascending: true })
+    .limit(200)
+  if (error) throw error
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string
+    title: string
+    due_at: string
+    contact_id: string | null
+    contact: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null
+  }>
+
+  let overdueCount = 0
+  let dueTodayCount = 0
+  const items: TaskDueItem[] = rows.map((r) => {
+    const overdue = new Date(r.due_at) < todayStart
+    if (overdue) overdueCount += 1
+    else dueTodayCount += 1
+    const contact = Array.isArray(r.contact) ? r.contact[0] : r.contact
+    return {
+      id: r.id,
+      title: r.title,
+      dueAt: r.due_at,
+      contactId: r.contact_id,
+      contactName: contact?.name || contact?.phone || null,
+      overdue,
+    }
+  })
+
+  return {
+    items: items.slice(0, limit),
+    overdueCount,
+    dueTodayCount,
+  }
 }

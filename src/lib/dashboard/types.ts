@@ -65,3 +65,19 @@ export interface ActivityItem {
   /** Optional deep-link for the whole row (not all items have a target). */
   href?: string
 }
+
+export interface TaskDueItem {
+  id: string
+  title: string
+  dueAt: string
+  contactId: string | null
+  contactName: string | null
+  overdue: boolean
+}
+
+export interface TasksDueSummary {
+  /** Top N due/overdue tasks, most overdue first — for the widget list. */
+  items: TaskDueItem[]
+  overdueCount: number
+  dueTodayCount: number
+}

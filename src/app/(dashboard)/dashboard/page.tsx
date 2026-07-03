@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
+import { useTranslation } from '@/lib/i18n/use-translation'
+import type { TranslationKey } from '@/lib/i18n/dictionaries'
 import { formatCurrency } from '@/lib/currency'
 import {
   MessageSquare,
@@ -17,6 +19,7 @@ import {
   loadMetrics,
   loadPipelineDonut,
   loadResponseTime,
+  loadTasksDueSummary,
 } from '@/lib/dashboard/queries'
 import type {
   ActivityItem,
@@ -24,6 +27,7 @@ import type {
   MetricsBundle,
   PipelineDonutData,
   ResponseTimeSummary,
+  TasksDueSummary,
 } from '@/lib/dashboard/types'
 
 import { MetricCard } from '@/components/dashboard/metric-card'
@@ -33,11 +37,13 @@ import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
+import { TasksWidget } from '@/components/dashboard/tasks-widget'
 
 type RangeDays = 7 | 30 | 90
 
 export default function DashboardPage() {
   const { defaultCurrency } = useAuth()
+  const { t } = useTranslation()
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
 
@@ -60,6 +66,9 @@ export default function DashboardPage() {
 
   const [activity, setActivity] = useState<ActivityItem[] | null>(null)
   const [activityLoading, setActivityLoading] = useState(true)
+
+  const [tasksSummary, setTasksSummary] = useState<TasksDueSummary | null>(null)
+  const [tasksSummaryLoading, setTasksSummaryLoading] = useState(true)
 
   const loadAll = useCallback(() => {
     const db = createClient()
@@ -94,6 +103,11 @@ export default function DashboardPage() {
       .then((a) => setActivity(a))
       .catch((err) => console.error('[dashboard] activity failed:', err))
       .finally(() => setActivityLoading(false))
+
+    void loadTasksDueSummary(db)
+      .then((s) => setTasksSummary(s))
+      .catch((err) => console.error('[dashboard] tasks summary failed:', err))
+      .finally(() => setTasksSummaryLoading(false))
   }, [])
 
   useEffect(() => {
@@ -122,9 +136,9 @@ export default function DashboardPage() {
     <div className="space-y-5">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t('dashboard.title')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Live analytics across conversations, contacts, deals, broadcasts, and automations.
+          {t('dashboard.subtitle')}
         </p>
       </div>
 
@@ -135,16 +149,16 @@ export default function DashboardPage() {
         ) : (
           <>
             <MetricCard
-              title="Active Conversations"
+              title={t('dashboard.cards.activeConversations')}
               value={metrics.activeConversations.current.toLocaleString()}
               icon={MessageSquare}
               delta={{
                 sign: metrics.activeConversations.previous,
-                label: deltaLabel(metrics.activeConversations.previous, 'new today vs yesterday'),
+                label: deltaLabel(metrics.activeConversations.previous, 'dashboard.delta.newTodayVsYesterday', t),
               }}
             />
             <MetricCard
-              title="New Contacts Today"
+              title={t('dashboard.cards.newContactsToday')}
               value={metrics.newContactsToday.current.toLocaleString()}
               icon={UserPlus}
               delta={{
@@ -152,18 +166,22 @@ export default function DashboardPage() {
                   metrics.newContactsToday.current - metrics.newContactsToday.previous,
                 label: deltaLabel(
                   metrics.newContactsToday.current - metrics.newContactsToday.previous,
-                  'vs yesterday',
+                  'dashboard.delta.vsYesterday',
+                  t,
                 ),
               }}
             />
             <MetricCard
-              title="Open Deals Value"
+              title={t('dashboard.cards.openDealsValue')}
               value={formatCurrency(metrics.openDealsValue, defaultCurrency)}
               icon={DollarSign}
-              subtitle={`${metrics.openDealsCount} open deal${metrics.openDealsCount === 1 ? '' : 's'}`}
+              subtitle={t(
+                metrics.openDealsCount === 1 ? 'dashboard.cards.openDealsSubtitle' : 'dashboard.cards.openDealsSubtitlePlural',
+                { count: metrics.openDealsCount },
+              )}
             />
             <MetricCard
-              title="Messages Sent Today"
+              title={t('dashboard.cards.messagesSentToday')}
               value={metrics.messagesSentToday.current.toLocaleString()}
               icon={Send}
               delta={{
@@ -171,7 +189,8 @@ export default function DashboardPage() {
                   metrics.messagesSentToday.current - metrics.messagesSentToday.previous,
                 label: deltaLabel(
                   metrics.messagesSentToday.current - metrics.messagesSentToday.previous,
-                  'vs yesterday',
+                  'dashboard.delta.vsYesterday',
+                  t,
                 ),
               }}
             />
@@ -210,16 +229,24 @@ export default function DashboardPage() {
       {/* Response time */}
       <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
 
-      {/* Activity feed */}
-      <ActivityFeed items={activity} loading={activityLoading} />
+      {/* Follow-ups + activity feed */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <TasksWidget data={tasksSummary} loading={tasksSummaryLoading} />
+        <ActivityFeed items={activity} loading={activityLoading} />
+      </div>
     </div>
   )
 }
 
 // ------------------------------------------------------------
 
-function deltaLabel(delta: number, suffix: string): string {
-  if (delta === 0) return `No change ${suffix}`
+function deltaLabel(
+  delta: number,
+  suffixKey: TranslationKey,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): string {
+  const suffix = t(suffixKey)
+  if (delta === 0) return t('dashboard.delta.noChange', { suffix })
   const sign = delta > 0 ? '+' : ''
   return `${sign}${delta.toLocaleString()} ${suffix}`
 }
