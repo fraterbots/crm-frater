@@ -184,12 +184,48 @@ export interface Conversation {
   assigned_agent_id?: string;
   /** Only meaningful when status === 'snoozed'; cleared on any other status. */
   snoozed_until?: string | null;
+  /** Set when the conversation was assigned via a team's round-robin pick. */
+  team_id?: string | null;
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
   created_at: string;
   updated_at: string;
   contact?: Contact;
+}
+
+export interface Team {
+  id: string;
+  account_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamMember {
+  id: string;
+  team_id: string;
+  /** auth.users.id — matches conversations.assigned_agent_id, not profiles.id. */
+  user_id: string;
+  account_id: string;
+  created_at: string;
+}
+
+/** A single step in a Macro's ordered action list. */
+export type MacroAction =
+  | { type: 'assign_agent'; agent_id: string }
+  | { type: 'add_tag'; tag_id: string }
+  | { type: 'change_status'; status: ConversationStatus }
+  | { type: 'send_canned_response'; canned_response_id: string };
+
+export interface Macro {
+  id: string;
+  account_id: string;
+  name: string;
+  actions: MacroAction[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export type SenderType = 'customer' | 'agent' | 'bot';

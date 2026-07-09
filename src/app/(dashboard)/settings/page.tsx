@@ -15,9 +15,11 @@ import { LanguagePanel } from '@/components/settings/language-panel';
 import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { CannedResponsesManager } from '@/components/settings/canned-responses-manager';
+import { MacrosManager } from '@/components/settings/macros-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
+import { TeamsManager } from '@/components/settings/teams-manager';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import {
   resolveSection,
@@ -63,9 +65,11 @@ export default function SettingsPage() {
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
     'canned-responses': <CannedResponsesManager />,
+    macros: <MacrosManager />,
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     members: <MembersTab />,
+    teams: <TeamsManager />,
     api: <ApiKeysSettings />,
   };
 

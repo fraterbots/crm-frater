@@ -10,7 +10,9 @@ import {
   Shield,
   Tags,
   User,
+  Users,
   UsersRound,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -33,9 +35,11 @@ export const SETTINGS_SECTIONS = [
   'whatsapp',
   'templates',
   'canned-responses',
+  'macros',
   'fields',
   'deals',
   'members',
+  'teams',
   'api',
 ] as const;
 
@@ -64,9 +68,11 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   whatsapp: { id: 'whatsapp', label: 'settings.sections.whatsapp', icon: PlugZap, group: 'workspace' },
   templates: { id: 'templates', label: 'settings.sections.templates', icon: FileText, group: 'workspace' },
   'canned-responses': { id: 'canned-responses', label: 'settings.sections.cannedResponses', icon: MessageSquareText, group: 'workspace' },
+  macros: { id: 'macros', label: 'settings.sections.macros', icon: Zap, group: 'workspace' },
   fields: { id: 'fields', label: 'settings.sections.fields', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'settings.sections.deals', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'settings.sections.members', icon: UsersRound, group: 'workspace' },
+  teams: { id: 'teams', label: 'settings.sections.teams', icon: Users, group: 'workspace' },
   api: { id: 'api', label: 'settings.sections.api', icon: KeyRound, group: 'workspace' },
 };
 

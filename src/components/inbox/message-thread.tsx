@@ -15,6 +15,8 @@ import type {
   ConversationStatus,
   MessageTemplate,
   Profile,
+  Team,
+  Macro,
 } from "@/types";
 import {
   MessageSquare,
@@ -26,6 +28,8 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Zap,
+  Loader2,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -216,6 +220,9 @@ export function MessageThread({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [macros, setMacros] = useState<Macro[]>([]);
+  const [runningMacroId, setRunningMacroId] = useState<string | null>(null);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
   // refetch is fire-and-forget through `onRefresh` (which bumps the
@@ -258,6 +265,50 @@ export function MessageThread({
           return;
         }
         setProfiles((data as Profile[]) ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Teams for the "Assign to team" submenu — same RLS-bounded shape as
+  // the profiles fetch above.
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("teams")
+      .select("*")
+      .order("name")
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to fetch teams:", error);
+          return;
+        }
+        setTeams((data as Team[]) ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Macros for the "Run macro" dropdown — same RLS-bounded shape as
+  // the profiles/teams fetches above.
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("macros")
+      .select("*")
+      .order("name")
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to fetch macros:", error);
+          return;
+        }
+        setMacros((data as Macro[]) ?? []);
       });
     return () => {
       cancelled = true;
@@ -867,6 +918,84 @@ export function MessageThread({
     [conversation, onAssignChange, t],
   );
 
+  // Round-robin assignment: pick_round_robin_agent (031_teams.sql) picks
+  // whichever team member has the fewest open assigned conversations,
+  // then this writes both assigned_agent_id and team_id in one update
+  // so the conversation records which team the pick came from.
+  const handleAssignToTeam = useCallback(
+    async (team: Team) => {
+      if (!conversation) return;
+
+      const supabase = createClient();
+      const { data: agentId, error: pickError } = await supabase.rpc(
+        "pick_round_robin_agent",
+        { p_team_id: team.id },
+      );
+
+      if (pickError || !agentId) {
+        toast.error(t("inbox.thread.assignToTeamNoMembersToast"));
+        return;
+      }
+
+      const { error } = await supabase
+        .from("conversations")
+        .update({ assigned_agent_id: agentId, team_id: team.id })
+        .eq("id", conversation.id);
+
+      if (error) {
+        toast.error(t("inbox.thread.updateAssignmentFailedToast"));
+        return;
+      }
+
+      onAssignChange(conversation.id, agentId as string);
+      const agentName =
+        profiles.find((p) => p.user_id === agentId)?.full_name ?? String(agentId);
+      toast.success(t("inbox.thread.roundRobinAssignedToast", { name: agentName }));
+    },
+    [conversation, onAssignChange, profiles, t],
+  );
+
+  // Runs the macro server-side (POST /api/macros/run) rather than
+  // replaying its steps as N client-side Supabase calls — one network
+  // round trip, and the WhatsApp-touching step (send_canned_response)
+  // needs the server-side engineSendText primitive anyway. Local state
+  // isn't patched directly; the realtime conversations/messages
+  // subscriptions already converge the UI for every mutation a macro
+  // can make, same as any other agent's concurrent edit would.
+  const handleRunMacro = useCallback(
+    async (macro: Macro) => {
+      if (!conversation) return;
+
+      setRunningMacroId(macro.id);
+      try {
+        const res = await fetch("/api/macros/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ macro_id: macro.id, conversation_id: conversation.id }),
+        });
+        const payload = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          toast.error(
+            t("inbox.thread.macroFailedToast", {
+              name: macro.name,
+              reason: payload?.error || `HTTP ${res.status}`,
+            }),
+          );
+          return;
+        }
+
+        toast.success(t("inbox.thread.macroRanToast", { name: macro.name }));
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : t("inbox.thread.networkErrorFallback");
+        toast.error(t("inbox.thread.macroFailedToast", { name: macro.name, reason }));
+      } finally {
+        setRunningMacroId(null);
+      }
+    },
+    [conversation, t],
+  );
+
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -1104,6 +1233,27 @@ export function MessageThread({
                   );
                 })
               )}
+              {teams.length > 0 && (
+                <>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="text-sm text-popover-foreground">
+                      {t("inbox.thread.assignToTeamLabel")}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="border-border bg-popover">
+                      {teams.map((team) => (
+                        <DropdownMenuItem
+                          key={team.id}
+                          onClick={() => handleAssignToTeam(team)}
+                          className="text-sm text-popover-foreground"
+                        >
+                          {team.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </>
+              )}
               {assignedAgentId && (
                 <>
                   <DropdownMenuSeparator className="bg-border" />
@@ -1117,6 +1267,36 @@ export function MessageThread({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Run macro dropdown */}
+          {macros.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={runningMacroId !== null}
+                className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md text-muted-foreground hover:bg-muted disabled:opacity-60"
+              >
+                {runningMacroId !== null ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Zap className="h-3 w-3" />
+                )}
+                <span className="hidden sm:inline">{t("inbox.thread.runMacroLabel")}</span>
+                <ChevronDown className="h-3 w-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="border-border bg-popover">
+                {macros.map((macro) => (
+                  <DropdownMenuItem
+                    key={macro.id}
+                    disabled={runningMacroId !== null}
+                    onClick={() => handleRunMacro(macro)}
+                    className="text-sm text-popover-foreground"
+                  >
+                    {macro.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
