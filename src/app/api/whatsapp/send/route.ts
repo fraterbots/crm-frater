@@ -6,6 +6,7 @@ import {
   sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import { sendTextMessage as evolutionSendTextMessage } from '@/lib/whatsapp/evolution-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
@@ -179,14 +180,29 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    // v1 of the unofficial (Evolution API) connection only supports
+    // text messages — media/templates need Meta-Cloud-API-specific
+    // handling that doesn't apply to it. See the WhatsApp-unofficial
+    // plan's "out of scope" list.
+    if (config.provider === 'evolution' && message_type !== 'text') {
+      return NextResponse.json(
+        {
+          error:
+            'Only text messages are supported on the unofficial (WhatsApp Web) connection today.',
+        },
+        { status: 400 },
+      )
+    }
+
+    const accessToken = config.provider === 'meta_cloud' ? decrypt(config.access_token) : ''
 
     // Self-heal legacy CBC-encrypted tokens. Fire-and-forget: we
     // return from the send without waiting, so a failed upgrade just
     // means the next send tries again. The upgrade is idempotent —
     // concurrent sends both produce valid GCM ciphertexts of the same
-    // plaintext, last write wins.
-    if (isLegacyFormat(config.access_token)) {
+    // plaintext, last write wins. Only applies to Meta rows — an
+    // evolution row has no access_token.
+    if (config.provider === 'meta_cloud' && isLegacyFormat(config.access_token)) {
       void supabase
         .from('whatsapp_config')
         .update({ access_token: encrypt(accessToken) })
@@ -272,6 +288,19 @@ export async function POST(request: Request) {
     }
 
     const attempt = async (phone: string): Promise<string> => {
+      if (config.provider === 'evolution') {
+        // message_type is guaranteed 'text' here (rejected above
+        // otherwise). Evolution has no phone-number-variant rejection
+        // mode like Meta's, so this always resolves on the first
+        // variant or throws — the retry loop below just no-ops past it.
+        const result = await evolutionSendTextMessage({
+          instanceName: config.evolution_instance_name,
+          instanceToken: decrypt(config.evolution_instance_token),
+          to: phone,
+          text: content_text,
+        })
+        return result.messageId
+      }
       if (message_type === 'template') {
         const result = await sendTemplateMessage({
           phoneNumberId: config.phone_number_id,

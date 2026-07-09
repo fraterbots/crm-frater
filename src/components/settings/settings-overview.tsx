@@ -30,6 +30,7 @@ interface OverviewCounts {
 interface WhatsAppStatus {
   configured: boolean;
   connected: boolean;
+  provider: 'meta_cloud' | 'evolution' | null;
 }
 
 export function SettingsOverview({
@@ -116,22 +117,37 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
-    // WhatsApp connection status — slower, independent.
+    // WhatsApp connection status — slower, independent. The health
+    // endpoint depends on which provider the row is on (an 'evolution'
+    // row has no access_token, so the Meta health-check would try to
+    // decrypt null and error) — fetch the row first, then pick.
     (async () => {
       setWhatsappLoading(true);
-      const [row, health] = await Promise.allSettled([
-        supabase
-          .from('whatsapp_config')
-          .select('phone_number_id')
-          .eq('account_id', acctId)
-          .maybeSingle(),
-        fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
-      ]);
+      const row = await supabase
+        .from('whatsapp_config')
+        .select('phone_number_id, provider')
+        .eq('account_id', acctId)
+        .maybeSingle();
       if (cancelled) return;
-      setWhatsapp({
-        configured: row.status === 'fulfilled' && !!row.value.data?.phone_number_id,
-        connected: health.status === 'fulfilled' && !!health.value?.connected,
-      });
+
+      const provider = (row.data?.provider as 'meta_cloud' | 'evolution' | undefined) ?? null;
+      const configured =
+        provider === 'evolution' ? !!row.data : !!row.data?.phone_number_id;
+
+      if (!configured) {
+        setWhatsapp({ configured: false, connected: false, provider: null });
+        setWhatsappLoading(false);
+        return;
+      }
+
+      const healthUrl =
+        provider === 'evolution' ? '/api/whatsapp/evolution/status' : '/api/whatsapp/config';
+      const health = await fetch(healthUrl, { cache: 'no-store' })
+        .then((r) => r.json())
+        .catch(() => null);
+      if (cancelled) return;
+
+      setWhatsapp({ configured: true, connected: !!health?.connected, provider });
       setWhatsappLoading(false);
     })();
 
@@ -166,6 +182,12 @@ export function SettingsOverview({
       ) : whatsapp.connected ? (
         <>
           <StatusDot tone="ok" /> {t('settings.overview.whatsappConnected')}
+          {' · '}
+          {t(
+            whatsapp.provider === 'evolution'
+              ? 'settings.overview.whatsappProviderEvolution'
+              : 'settings.overview.whatsappProviderMeta',
+          )}
         </>
       ) : (
         <>

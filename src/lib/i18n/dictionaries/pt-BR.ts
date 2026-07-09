@@ -206,6 +206,8 @@ export const ptBR = {
   "settings.overview.whatsappNotSetUp": "Ainda não configurado",
   "settings.overview.whatsappConnected": "Conectado",
   "settings.overview.whatsappNeedsReconnect": "Precisa reconectar",
+  "settings.overview.whatsappProviderMeta": "Cloud API",
+  "settings.overview.whatsappProviderEvolution": "WhatsApp Web",
   "settings.overview.membersViewTeam": "Ver membros da equipe",
   "settings.overview.memberCount": "{{count}} membro",
   "settings.overview.memberCountPlural": "{{count}} membros",

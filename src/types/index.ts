@@ -280,9 +280,14 @@ export interface MessageReaction {
 export interface WhatsAppConfig {
   id: string;
   user_id: string;
-  phone_number_id: string;
+  /** Which WhatsApp connection this row represents. Defaults to
+   *  'meta_cloud' for every pre-existing row. */
+  provider: 'meta_cloud' | 'evolution';
+  /** Meta-only — null on an 'evolution' row. */
+  phone_number_id?: string;
   waba_id?: string;
-  access_token: string;
+  /** Meta-only (encrypted) — null on an 'evolution' row. */
+  access_token?: string;
   verify_token?: string;
   status: 'connected' | 'disconnected';
   connected_at?: string;
@@ -296,6 +301,15 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+  /** Evolution-only — the per-account instance name on the self-hosted
+   *  Evolution API server. Null on a 'meta_cloud' row. */
+  evolution_instance_name?: string;
+  /** Evolution-only (encrypted) — the per-instance apikey. Null on a
+   *  'meta_cloud' row. */
+  evolution_instance_token?: string;
+  /** Evolution-only — random secret embedded in the inbound webhook
+   *  URL, since Evolution doesn't sign its webhook requests. */
+  evolution_webhook_secret?: string;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

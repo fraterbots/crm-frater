@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
+import { EvolutionConnectPanel } from './evolution-connect-panel';
 import {
   Accordion,
   AccordionItem,
@@ -34,6 +35,13 @@ const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+// TODO: this file predates the i18n migration (src/lib/i18n) — every
+// other settings panel goes through useTranslation()/t(), this one
+// doesn't yet. Not fixed here to keep the Evolution API connection
+// feature scoped; strings below intentionally match this file's
+// existing hardcoded-English convention rather than introducing a
+// half-i18n'd file.
+type Provider = 'meta_cloud' | 'evolution';
 
 export function WhatsAppConfig() {
   const supabase = createClient();
@@ -50,6 +58,10 @@ export function WhatsAppConfig() {
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
+  // Independent of `config` so a brand-new account (no saved row yet)
+  // can still pick "Não-oficial" before anything exists to load.
+  // Synced from `config?.provider` once a row loads (see fetchConfig).
+  const [provider, setProvider] = useState<Provider>('meta_cloud');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -106,6 +118,7 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
+        setProvider((data.provider as Provider) ?? 'meta_cloud');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -124,8 +137,11 @@ export function WhatsAppConfig() {
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
-      if (data) {
+      // Then verify health via the API (decrypts token + pings Meta).
+      // Only meaningful for a meta_cloud row — an evolution row has no
+      // access_token to decrypt, and its own connect panel handles its
+      // own status via /api/whatsapp/evolution/status.
+      if (data && data.provider !== 'evolution') {
         try {
           const res = await fetch('/api/whatsapp/config', { method: 'GET' });
           const payload = await res.json();
@@ -381,6 +397,43 @@ export function WhatsAppConfig() {
         title="WhatsApp connection"
         description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
       />
+
+      {/* Connection type selector */}
+      <div
+        role="radiogroup"
+        aria-label="Connection type"
+        className="mb-6 grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2"
+      >
+        {(
+          [
+            { id: 'meta_cloud' as const, title: 'Oficial (Cloud API)', desc: 'Meta Business, número verificado' },
+            { id: 'evolution' as const, title: 'Não-oficial (WhatsApp Web)', desc: 'QR code, sem aprovação da Meta' },
+          ]
+        ).map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            role="radio"
+            aria-checked={provider === opt.id}
+            onClick={() => setProvider(opt.id)}
+            className={`rounded-lg border p-3 text-left transition-colors ${
+              provider === opt.id
+                ? 'border-primary bg-primary/10'
+                : 'border-border bg-card hover:border-primary/40'
+            }`}
+          >
+            <p className="text-sm font-medium text-foreground">{opt.title}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{opt.desc}</p>
+          </button>
+        ))}
+      </div>
+
+      {provider === 'evolution' ? (
+        <EvolutionConnectPanel
+          isCurrentProvider={config?.provider === 'evolution'}
+          initialStatus={config?.provider === 'evolution' ? config?.status : undefined}
+        />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
@@ -841,6 +894,7 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
+      )}
     </section>
   );
 }

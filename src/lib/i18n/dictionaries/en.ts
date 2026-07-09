@@ -206,6 +206,8 @@ export const en = {
   "settings.overview.whatsappNotSetUp": "Not set up yet",
   "settings.overview.whatsappConnected": "Connected",
   "settings.overview.whatsappNeedsReconnect": "Needs reconnecting",
+  "settings.overview.whatsappProviderMeta": "Cloud API",
+  "settings.overview.whatsappProviderEvolution": "WhatsApp Web",
   "settings.overview.membersViewTeam": "View team members",
   "settings.overview.memberCount": "{{count}} member",
   "settings.overview.memberCountPlural": "{{count}} members",
