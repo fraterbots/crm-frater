@@ -508,12 +508,22 @@ export default function InboxPage() {
   );
 
   const handleStatusChange = useCallback(
-    (conversationId: string, status: ConversationStatus) => {
+    (
+      conversationId: string,
+      status: ConversationStatus,
+      snoozedUntil?: string | null,
+    ) => {
       setConversations((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, status } : c))
+        prev.map((c) =>
+          c.id === conversationId
+            ? { ...c, status, snoozed_until: snoozedUntil ?? null }
+            : c
+        )
       );
       if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) => (prev ? { ...prev, status } : prev));
+        setActiveConversation((prev) =>
+          prev ? { ...prev, status, snoozed_until: snoozedUntil ?? null } : prev
+        );
       }
     },
     [activeConversation]

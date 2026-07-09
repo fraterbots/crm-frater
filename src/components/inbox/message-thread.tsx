@@ -35,6 +35,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -71,7 +74,11 @@ interface MessageThreadProps {
   onMessagesLoaded: (messages: Message[]) => void;
   onNewMessage: (message: Message) => void;
   onUpdateMessage: (id: string, updates: Partial<Message>) => void;
-  onStatusChange: (conversationId: string, status: ConversationStatus) => void;
+  onStatusChange: (
+    conversationId: string,
+    status: ConversationStatus,
+    snoozedUntil?: string | null,
+  ) => void;
   onAssignChange: (
     conversationId: string,
     assignedAgentId: string | null,
@@ -145,7 +152,33 @@ function getStatusOptions(
   return [
     { label: t("inbox.conversationList.statusOpen"), value: "open", color: "text-primary" },
     { label: t("inbox.conversationList.statusPending"), value: "pending", color: "text-amber-400" },
+    { label: t("inbox.conversationList.statusSnoozed"), value: "snoozed", color: "text-sky-400" },
     { label: t("inbox.conversationList.statusClosed"), value: "closed", color: "text-muted-foreground" },
+  ];
+}
+
+/** Preset snooze durations offered in the status dropdown's submenu. */
+function getSnoozePresets(
+  t: ReturnType<typeof useTranslation>["t"],
+): { label: string; until: () => Date }[] {
+  return [
+    {
+      label: t("inbox.thread.snoozeOneHour"),
+      until: () => new Date(Date.now() + 60 * 60 * 1000),
+    },
+    {
+      label: t("inbox.thread.snoozeFourHours"),
+      until: () => new Date(Date.now() + 4 * 60 * 60 * 1000),
+    },
+    {
+      label: t("inbox.thread.snoozeTomorrow"),
+      until: () => {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+        return d;
+      },
+    },
   ];
 }
 
@@ -509,6 +542,42 @@ export function MessageThread({
     [conversation, onNewMessage, onUpdateMessage, t]
   );
 
+  // Internal notes insert directly into `messages` (is_internal: true) —
+  // no /api/whatsapp/send round trip, since a note never reaches Meta.
+  // No optimistic temp bubble either: there's no network round-trip risk
+  // beyond the single insert, so we just wait for it and hand the real
+  // row to onNewMessage (dedup'd against the realtime INSERT by id in
+  // the parent, same as every other message path).
+  const handleSendNote = useCallback(
+    async (text: string) => {
+      if (!conversation || !user) return;
+
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: conversation.id,
+          sender_type: "agent",
+          sender_id: user.id,
+          content_type: "text",
+          content_text: text,
+          status: "sent",
+          is_internal: true,
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        console.error("Failed to send note:", error);
+        toast.error(t("inbox.thread.noteSendFailedToast"));
+        return;
+      }
+
+      onNewMessage(data as Message);
+    },
+    [conversation, user, onNewMessage, t],
+  );
+
   const handleSendMedia = useCallback(
     async (payload: SendMediaPayload) => {
       if (!conversation) return;
@@ -576,16 +645,22 @@ export function MessageThread({
   );
 
   const handleStatusChange = useCallback(
-    async (status: ConversationStatus) => {
+    async (status: ConversationStatus, snoozedUntil?: Date) => {
       if (!conversation) return;
+
+      // snoozed_until always travels with status: set when snoozing,
+      // cleared (null) for every other status so a later manual status
+      // change can't leave a stale timestamp behind for the cron sweep.
+      const snoozedUntilIso =
+        status === "snoozed" && snoozedUntil ? snoozedUntil.toISOString() : null;
 
       const supabase = createClient();
       await supabase
         .from("conversations")
-        .update({ status })
+        .update({ status, snoozed_until: snoozedUntilIso })
         .eq("id", conversation.id);
 
-      onStatusChange(conversation.id, status);
+      onStatusChange(conversation.id, status, snoozedUntilIso);
     },
     [conversation, onStatusChange]
   );
@@ -817,6 +892,16 @@ export function MessageThread({
   const currentStatus = statusOptions.find(
     (s) => s.value === conversation.status
   );
+  const snoozePresets = getSnoozePresets(t);
+  const snoozedUntilTitle =
+    conversation.status === "snoozed" && conversation.snoozed_until
+      ? t("inbox.thread.snoozedUntilTooltip", {
+          time: new Date(conversation.snoozed_until).toLocaleString(
+            locale === "pt-BR" ? "pt-BR" : "en-US",
+            { dateStyle: "short", timeStyle: "short" },
+          ),
+        })
+      : undefined;
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
@@ -924,7 +1009,9 @@ export function MessageThread({
 
           {/* Status dropdown */}
           <DropdownMenu>
-            <DropdownMenuTrigger className={cn(
+            <DropdownMenuTrigger
+              title={snoozedUntilTitle}
+              className={cn(
                   "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
                   currentStatus?.color ?? "text-muted-foreground"
                 )}>
@@ -935,15 +1022,34 @@ export function MessageThread({
               align="end"
               className="border-border bg-popover"
             >
-              {statusOptions.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={() => handleStatusChange(opt.value)}
-                  className={cn("text-sm", opt.color)}
-                >
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
+              {statusOptions.map((opt) =>
+                opt.value === "snoozed" ? (
+                  <DropdownMenuSub key={opt.value}>
+                    <DropdownMenuSubTrigger className={cn("text-sm", opt.color)}>
+                      {opt.label}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="border-border bg-popover">
+                      {snoozePresets.map((preset) => (
+                        <DropdownMenuItem
+                          key={preset.label}
+                          onClick={() => handleStatusChange("snoozed", preset.until())}
+                          className="text-sm text-popover-foreground"
+                        >
+                          {preset.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                ) : (
+                  <DropdownMenuItem
+                    key={opt.value}
+                    onClick={() => handleStatusChange(opt.value)}
+                    className={cn("text-sm", opt.color)}
+                  >
+                    {opt.label}
+                  </DropdownMenuItem>
+                ),
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -1093,6 +1199,7 @@ export function MessageThread({
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
+        onSendNote={handleSendNote}
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}

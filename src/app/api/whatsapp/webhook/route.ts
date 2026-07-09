@@ -616,7 +616,11 @@ async function processMessage(
     return
   }
 
-  // Update conversation
+  // Update conversation. A snoozed conversation reopens on any new
+  // inbound message — this is the one place guaranteed to run for
+  // every inbound message regardless of whether an agent has the
+  // realtime channel open (see 028_conversation_snooze.sql).
+  const wasSnoozed = conversation.status === 'snoozed'
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
     .update({
@@ -624,6 +628,7 @@ async function processMessage(
       last_message_at: new Date().toISOString(),
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
+      ...(wasSnoozed ? { status: 'open', snoozed_until: null } : {}),
     })
     .eq('id', conversation.id)
 

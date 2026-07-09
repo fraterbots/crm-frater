@@ -14,6 +14,7 @@ import { AppearancePanel } from '@/components/settings/appearance-panel';
 import { LanguagePanel } from '@/components/settings/language-panel';
 import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
 import { TemplateManager } from '@/components/settings/template-manager';
+import { CannedResponsesManager } from '@/components/settings/canned-responses-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
@@ -61,6 +62,7 @@ export default function SettingsPage() {
     language: <LanguagePanel />,
     whatsapp: <WhatsAppConfig />,
     templates: <TemplateManager />,
+    'canned-responses': <CannedResponsesManager />,
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     members: <MembersTab />,

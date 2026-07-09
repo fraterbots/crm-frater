@@ -13,6 +13,7 @@ import {
   LayoutTemplate,
   ImageOff,
   CornerDownLeft,
+  StickyNote,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
@@ -255,7 +256,9 @@ export function MessageBubble({
   currentUserId,
   onToggleReaction,
 }: MessageBubbleProps) {
+  const { t } = useTranslation();
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
+  const isInternal = message.is_internal === true;
   const time = format(new Date(message.created_at), "HH:mm");
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
@@ -264,17 +267,25 @@ export function MessageBubble({
     <div
       className={cn(
         "flex flex-col",
-        isAgent ? "items-end" : "items-start",
+        isInternal ? "w-full items-center" : isAgent ? "items-end" : "items-start",
       )}
     >
       <div
         className={cn(
           "relative rounded-2xl px-3 py-2",
-          isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+          isInternal
+            ? "w-full border border-amber-500/30 bg-amber-500/10 text-amber-100"
+            : isAgent
+              ? "rounded-br-md bg-primary text-primary-foreground"
+              : "rounded-bl-md bg-muted text-foreground",
         )}
       >
+        {isInternal && (
+          <span className="mb-1 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-amber-400">
+            <StickyNote className="h-3 w-3" />
+            {t("inbox.messageBubble.internalNoteLabel")}
+          </span>
+        )}
         {reply && (
           <ReplyQuote
             authorLabel={reply.authorLabel}
@@ -286,7 +297,7 @@ export function MessageBubble({
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
-            isAgent ? "justify-end" : "justify-start",
+            isInternal ? "justify-start" : isAgent ? "justify-end" : "justify-start",
           )}
         >
           <span
@@ -295,13 +306,19 @@ export function MessageBubble({
               // Outbound bubbles sit on the primary fill, so the
               // timestamp must read against that (not the neutral
               // foreground) — otherwise it goes low-contrast in light
-              // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              // mode. Inbound bubbles use the muted surface. Notes sit
+              // on their own amber tint.
+              isInternal
+                ? "text-amber-400/80"
+                : isAgent
+                  ? "text-primary-foreground/70"
+                  : "text-muted-foreground",
             )}
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {/* No delivery-status ticks for notes — they never reach Meta. */}
+          {isAgent && !isInternal && <StatusIcon status={message.status} />}
         </div>
       </div>
       {reactions && reactions.length > 0 && onToggleReaction && (

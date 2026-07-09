@@ -10,6 +10,8 @@ import {
 import {
   Send,
   LayoutTemplate,
+  MessageSquareText,
+  StickyNote,
   Paperclip,
   Image as ImageIcon,
   Video,
@@ -36,6 +38,7 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
 import { ReplyQuote } from "./reply-quote";
+import { CannedResponsePicker } from "./canned-response-picker";
 import { useTranslation } from "@/lib/i18n/use-translation";
 
 /** Media content types an agent can send from the composer. */
@@ -103,6 +106,8 @@ interface MessageComposerProps {
   sessionExpired: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
+  /** Internal notes never touch the WhatsApp API, so they ignore sessionExpired. */
+  onSendNote: (text: string) => void;
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
@@ -124,6 +129,7 @@ export function MessageComposer({
   sessionExpired,
   onSend,
   onSendMedia,
+  onSendNote,
   onOpenTemplates,
   replyTo,
   onClearReply,
@@ -131,6 +137,8 @@ export function MessageComposer({
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [cannedPickerOpen, setCannedPickerOpen] = useState(false);
+  const [noteMode, setNoteMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
@@ -214,23 +222,58 @@ export function MessageComposer({
     }
   }, [text, sending, sessionExpired, onSend, replyTo?.id]);
 
+  // Notes never touch the WhatsApp API, so — unlike handleSend — this
+  // deliberately ignores sessionExpired.
+  const handleSendNoteClick = useCallback(() => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+
+    onSendNote(trimmed);
+    setText("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  }, [text, sending, onSendNote]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        handleSend();
+        if (noteMode) {
+          handleSendNoteClick();
+        } else {
+          handleSend();
+        }
       }
     },
-    [handleSend]
+    [noteMode, handleSendNoteClick, handleSend]
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setText(e.target.value);
+      const value = e.target.value;
+      // "/" as the very first (and only) character opens the canned
+      // response picker, fulfilling the quickRepliesHint below the
+      // textarea. Cleared immediately so it doesn't linger in the draft.
+      if (value === "/") {
+        setCannedPickerOpen(true);
+        setText("");
+        adjustHeight();
+        return;
+      }
+      setText(value);
       adjustHeight();
     },
     [adjustHeight]
   );
+
+  const handleInsertCanned = useCallback((body: string) => {
+    setText((prev) => (prev ? `${prev} ${body}` : body));
+    requestAnimationFrame(() => {
+      adjustHeight();
+      textareaRef.current?.focus();
+    });
+  }, [adjustHeight]);
 
   // Upload a captured file to chat-media and stage it as a draft.
   const stageUpload = useCallback(
@@ -536,6 +579,36 @@ export function MessageComposer({
             <LayoutTemplate className="h-4 w-4" />
           </GatedButton>
 
+          <GatedButton
+            variant="ghost"
+            size="sm"
+            canAct={!readOnly}
+            gateReason="send messages"
+            title={readOnly ? undefined : t("inbox.composer.cannedResponsesTitle")}
+            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setCannedPickerOpen(true)}
+          >
+            <MessageSquareText className="h-4 w-4" />
+          </GatedButton>
+
+          <GatedButton
+            variant="ghost"
+            size="sm"
+            canAct={!readOnly}
+            gateReason="send messages"
+            title={readOnly ? undefined : t("inbox.composer.noteToggleLabel")}
+            aria-pressed={noteMode}
+            className={cn(
+              "h-9 w-9 shrink-0 p-0",
+              noteMode
+                ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 hover:text-amber-300"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setNoteMode((prev) => !prev)}
+          >
+            <StickyNote className="h-4 w-4" />
+          </GatedButton>
+
           <textarea
             ref={textareaRef}
             value={text}
@@ -544,19 +617,26 @@ export function MessageComposer({
             placeholder={
               readOnly
                 ? t("inbox.composer.placeholderReadOnly")
-                : sessionExpired
-                  ? t("inbox.composer.placeholderSessionExpired")
-                  : t("inbox.composer.placeholderDefault")
+                : noteMode
+                  ? t("inbox.composer.notePlaceholder")
+                  : sessionExpired
+                    ? t("inbox.composer.placeholderSessionExpired")
+                    : t("inbox.composer.placeholderDefault")
             }
-            disabled={sessionExpired || readOnly}
+            disabled={(sessionExpired && !noteMode) || readOnly}
             rows={1}
             // Textarea keeps its own inline title — the GatedButton
             // wrapping pattern doesn't apply to non-button inputs.
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("inbox.composer.readOnlyTooltip") : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
-              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
+              "flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors",
+              noteMode
+                ? "border-amber-500/30 bg-amber-500/10 focus:border-amber-500/50"
+                : "border-border bg-muted focus:border-primary/50",
+              (sessionExpired && !noteMode) || readOnly
+                ? "cursor-not-allowed opacity-50"
+                : undefined,
             )}
           />
 
@@ -564,11 +644,17 @@ export function MessageComposer({
             size="sm"
             canAct={!readOnly}
             gateReason="send messages"
-            disabled={!text.trim() || sessionExpired || sending}
-            onClick={handleSend}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
+            disabled={!text.trim() || (sessionExpired && !noteMode) || sending}
+            onClick={noteMode ? handleSendNoteClick : handleSend}
+            title={noteMode ? t("inbox.composer.sendNoteTitle") : undefined}
+            className={cn(
+              "h-9 w-9 shrink-0 p-0 disabled:opacity-40",
+              noteMode
+                ? "bg-amber-500 hover:bg-amber-600"
+                : "bg-primary hover:bg-primary/90",
+            )}
           >
-            <Send className="h-4 w-4" />
+            {noteMode ? <StickyNote className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </GatedButton>
         </div>
       )}
@@ -581,6 +667,12 @@ export function MessageComposer({
           {t("inbox.composer.quickRepliesHint")}
         </p>
       )}
+
+      <CannedResponsePicker
+        open={cannedPickerOpen}
+        onOpenChange={setCannedPickerOpen}
+        onSelect={handleInsertCanned}
+      />
     </div>
   );
 }

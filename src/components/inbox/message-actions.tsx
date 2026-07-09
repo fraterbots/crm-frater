@@ -43,6 +43,11 @@ export function MessageActions({
 
   const isAgent =
     message.sender_type === "agent" || message.sender_type === "bot";
+  // Internal notes are always agent-sent (enforced by the
+  // messages_internal_only_agent CHECK), but render centered/full-width
+  // instead of the usual agent-right / customer-left split — they aren't
+  // part of the customer-facing conversation flow.
+  const isInternal = message.is_internal === true;
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -82,17 +87,18 @@ export function MessageActions({
     <div
       className={cn(
         "flex w-full",
-        isAgent ? "justify-end" : "justify-start",
+        isInternal ? "justify-center" : isAgent ? "justify-end" : "justify-start",
       )}
       onContextMenu={handleContextMenu}
       onBlur={() => setTouchOpen(false)}
     >
-      {/* `min-w-0` lets this flex child actually respect the 75% cap.
+      {/* `min-w-0` lets this flex child actually respect the width cap.
        *  Default `min-width: auto` lets content (a long quote preview,
        *  an unbroken URL) push past the cap and shove the row past
        *  100%, which used to bleed across into the contact-sidebar
-       *  area. See issue #165. */}
-      <div className="group/actions relative min-w-0 max-w-[75%]">
+       *  area. See issue #165. Notes get a wider cap (90% vs 75%) since
+       *  they render centered/full-width, Chatwoot-style. */}
+      <div className={cn("group/actions relative min-w-0", isInternal ? "max-w-[90%]" : "max-w-[75%]")}>
         {children}
       <div
         data-touch-open={touchOpen || pickerOpen ? "true" : undefined}

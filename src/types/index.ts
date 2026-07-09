@@ -157,7 +157,24 @@ export interface Task {
   updated_at: string;
 }
 
-export type ConversationStatus = 'open' | 'pending' | 'closed';
+/**
+ * A free-text snippet an agent inserts into the composer. Not to be
+ * confused with `MessageTemplate` — those are Meta-approved WhatsApp
+ * templates with an approval workflow; canned responses are plain
+ * text and never touch the Meta API.
+ */
+export interface CannedResponse {
+  id: string;
+  account_id: string;
+  shortcut: string;
+  title: string;
+  body: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ConversationStatus = 'open' | 'pending' | 'closed' | 'snoozed';
 
 export interface Conversation {
   id: string;
@@ -165,6 +182,8 @@ export interface Conversation {
   contact_id: string;
   status: ConversationStatus;
   assigned_agent_id?: string;
+  /** Only meaningful when status === 'snoozed'; cleared on any other status. */
+  snoozed_until?: string | null;
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
@@ -206,6 +225,8 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  /** Agent-only note rendered inline in the thread — never sent to the customer. */
+  is_internal?: boolean;
 }
 
 export type ReactionActor = 'customer' | 'agent';

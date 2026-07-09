@@ -36,11 +36,12 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   open: "bg-primary",
   pending: "bg-amber-500",
   closed: "bg-muted-foreground",
+  snoozed: "bg-sky-500",
 };
 
 type InboxFilter = ConversationStatus | "all" | "unread";
 
-const FILTER_VALUES: InboxFilter[] = ["all", "unread", "open", "pending", "closed"];
+const FILTER_VALUES: InboxFilter[] = ["all", "unread", "open", "pending", "snoozed", "closed"];
 
 function filterLabel(t: ReturnType<typeof useTranslation>["t"], value: InboxFilter): string {
   switch (value) {
@@ -52,6 +53,8 @@ function filterLabel(t: ReturnType<typeof useTranslation>["t"], value: InboxFilt
       return t("inbox.conversationList.filterOpen");
     case "pending":
       return t("inbox.conversationList.filterPending");
+    case "snoozed":
+      return t("inbox.conversationList.filterSnoozed");
     case "closed":
       return t("inbox.conversationList.filterClosed");
   }
@@ -63,6 +66,8 @@ function statusLabel(t: ReturnType<typeof useTranslation>["t"], status: Conversa
       return t("inbox.conversationList.statusOpen");
     case "pending":
       return t("inbox.conversationList.statusPending");
+    case "snoozed":
+      return t("inbox.conversationList.statusSnoozed");
     case "closed":
       return t("inbox.conversationList.statusClosed");
   }
