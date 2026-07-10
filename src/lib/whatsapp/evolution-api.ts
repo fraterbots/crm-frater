@@ -1,10 +1,9 @@
 /**
  * Evolution API helpers — the "unofficial" WhatsApp connection (a
- * self-hosted Baileys/WhatsApp-Web bridge, see EVOLUTION_API_URL).
- * Mirrors meta-api.ts's conventions: named-params-only functions,
- * results normalized to the same MetaSendResult-shaped `{messageId}`
- * so callers don't need to special-case which provider they're
- * talking to.
+ * self-hosted Baileys/WhatsApp-Web bridge). Mirrors meta-api.ts's
+ * conventions: named-params-only functions, results normalized to the
+ * same MetaSendResult-shaped `{messageId}` so callers don't need to
+ * special-case which provider they're talking to.
  *
  * Field names below were confirmed against a live Evolution API
  * v2.3.7 instance (create-instance + connectionState). The
@@ -14,12 +13,52 @@
  * time this is exercised against a real connected instance; fall
  * back to the nested `{number, textMessage: {text}}` shape (seen in
  * some Evolution docs/versions) if Evolution rejects the flat one.
+ *
+ * Credentials: read from the platform_settings table (owner-editable
+ * from Settings → WhatsApp), falling back to EVOLUTION_API_URL /
+ * EVOLUTION_API_KEY env vars when no row is saved yet — this keeps a
+ * server already configured via env vars working without forcing an
+ * immediate UI migration.
  */
 
-function evolutionBase(): string {
-  const url = process.env.EVOLUTION_API_URL
-  if (!url) throw new Error('EVOLUTION_API_URL is not configured')
-  return url.replace(/\/$/, '')
+import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { decrypt } from './encryption'
+
+// Lazy service-role client — this module is called both from
+// user-session routes and from the account-agnostic inbound webhook,
+// so it can't rely on a request-scoped client.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _adminClient: any = null
+function supabaseAdmin() {
+  if (!_adminClient) {
+    _adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    )
+  }
+  return _adminClient
+}
+
+interface EvolutionCredentials {
+  apiUrl: string
+  adminKey: string
+}
+
+async function getEvolutionCredentials(): Promise<EvolutionCredentials> {
+  const { data } = await supabaseAdmin()
+    .from('platform_settings')
+    .select('evolution_api_url, evolution_api_key')
+    .eq('id', true)
+    .maybeSingle()
+
+  const apiUrl = (data?.evolution_api_url as string | undefined) || process.env.EVOLUTION_API_URL
+  if (!apiUrl) throw new Error('Evolution API URL is not configured')
+
+  const encryptedKey = data?.evolution_api_key as string | undefined
+  const adminKey = encryptedKey ? decrypt(encryptedKey) : process.env.EVOLUTION_API_KEY
+  if (!adminKey) throw new Error('Evolution API key is not configured')
+
+  return { apiUrl: apiUrl.replace(/\/$/, ''), adminKey }
 }
 
 interface EvolutionErrorResponse {
@@ -64,10 +103,9 @@ export interface EvolutionCreateInstanceResult {
 export async function createInstance(
   args: EvolutionCreateInstanceArgs,
 ): Promise<EvolutionCreateInstanceResult> {
-  const adminKey = process.env.EVOLUTION_API_KEY
-  if (!adminKey) throw new Error('EVOLUTION_API_KEY is not configured')
+  const { apiUrl, adminKey } = await getEvolutionCredentials()
 
-  const response = await fetch(`${evolutionBase()}/instance/create`, {
+  const response = await fetch(`${apiUrl}/instance/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: adminKey },
     body: JSON.stringify({
@@ -99,10 +137,9 @@ export interface EvolutionConnectionState {
 /** Uses the admin key — instance lifecycle/status calls are account-
  *  management operations, not per-instance sends. */
 export async function getConnectionState(instanceName: string): Promise<EvolutionConnectionState> {
-  const adminKey = process.env.EVOLUTION_API_KEY
-  if (!adminKey) throw new Error('EVOLUTION_API_KEY is not configured')
+  const { apiUrl, adminKey } = await getEvolutionCredentials()
 
-  const response = await fetch(`${evolutionBase()}/instance/connectionState/${instanceName}`, {
+  const response = await fetch(`${apiUrl}/instance/connectionState/${instanceName}`, {
     headers: { apikey: adminKey },
   })
   if (!response.ok) {
@@ -119,10 +156,9 @@ export interface EvolutionReconnectResult {
 /** Fetches a fresh QR code for an instance stuck in 'connecting'
  *  (e.g. the first QR expired before being scanned). */
 export async function reconnectInstance(instanceName: string): Promise<EvolutionReconnectResult> {
-  const adminKey = process.env.EVOLUTION_API_KEY
-  if (!adminKey) throw new Error('EVOLUTION_API_KEY is not configured')
+  const { apiUrl, adminKey } = await getEvolutionCredentials()
 
-  const response = await fetch(`${evolutionBase()}/instance/connect/${instanceName}`, {
+  const response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
     headers: { apikey: adminKey },
   })
   if (!response.ok) {
@@ -146,7 +182,10 @@ export interface EvolutionSendTextArgs {
 
 export async function sendTextMessage(args: EvolutionSendTextArgs): Promise<EvolutionSendResult> {
   const { instanceName, instanceToken, to, text } = args
-  const response = await fetch(`${evolutionBase()}/message/sendText/${instanceName}`, {
+  // Only needs the base URL, not the admin key — this call authenticates
+  // with the per-instance token instead.
+  const { apiUrl } = await getEvolutionCredentials()
+  const response = await fetch(`${apiUrl}/message/sendText/${instanceName}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: instanceToken },
     body: JSON.stringify({ number: to, text }),

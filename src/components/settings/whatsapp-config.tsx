@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
 import { EvolutionConnectPanel } from './evolution-connect-panel';
+import { EvolutionPlatformSettings } from './evolution-platform-settings';
 import {
   Accordion,
   AccordionItem,
@@ -50,7 +51,7 @@ export function WhatsAppConfig() {
   // context and key every read off it — so a teammate who just
   // joined an account sees the inviter's saved config without
   // having to re-enter anything.
-  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  const { user, accountId, isOwner, loading: authLoading, profileLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -429,10 +430,13 @@ export function WhatsAppConfig() {
       </div>
 
       {provider === 'evolution' ? (
-        <EvolutionConnectPanel
-          isCurrentProvider={config?.provider === 'evolution'}
-          initialStatus={config?.provider === 'evolution' ? config?.status : undefined}
-        />
+        <div className="space-y-6">
+          {isOwner && <EvolutionPlatformSettings />}
+          <EvolutionConnectPanel
+            isCurrentProvider={config?.provider === 'evolution'}
+            initialStatus={config?.provider === 'evolution' ? config?.status : undefined}
+          />
+        </div>
       ) : (
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
