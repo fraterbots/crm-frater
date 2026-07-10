@@ -77,9 +77,13 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // API routes that need auth (not webhooks)
+  // API routes that need auth (not webhooks). No leading slash on
+  // 'webhook' here — the Evolution route is /evolution-webhook/[secret]
+  // (segment glued with a hyphen, not a slash), so a '/webhook' check
+  // would miss it and 401 every inbound Evolution call before the
+  // route's own secret-based auth ever runs.
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
-      !request.nextUrl.pathname.includes('/webhook')) {
+      !request.nextUrl.pathname.includes('webhook')) {
     return withRefreshedCookies(
       NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     )
