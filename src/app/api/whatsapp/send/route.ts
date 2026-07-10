@@ -8,6 +8,8 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import {
   sendTextMessage as evolutionSendTextMessage,
+  sendMediaMessage as evolutionSendMediaMessage,
+  sendAudioMessage as evolutionSendAudioMessage,
   type EvolutionQuoted,
 } from '@/lib/whatsapp/evolution-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
@@ -183,15 +185,14 @@ export async function POST(request: Request) {
       )
     }
 
-    // v1 of the unofficial (Evolution API) connection only supports
-    // text messages — media/templates need Meta-Cloud-API-specific
-    // handling that doesn't apply to it. See the WhatsApp-unofficial
-    // plan's "out of scope" list.
-    if (config.provider === 'evolution' && message_type !== 'text') {
+    // Templates are a Meta-specific concept (their own approval flow) —
+    // doesn't apply to the unofficial (WhatsApp Web) connection and
+    // probably never will. Text + media are both supported there.
+    if (config.provider === 'evolution' && message_type === 'template') {
       return NextResponse.json(
         {
           error:
-            'Only text messages are supported on the unofficial (WhatsApp Web) connection today.',
+            'Templates are not supported on the unofficial (WhatsApp Web) connection.',
         },
         { status: 400 },
       )
@@ -309,13 +310,36 @@ export async function POST(request: Request) {
 
     const attempt = async (phone: string): Promise<string> => {
       if (config.provider === 'evolution') {
-        // message_type is guaranteed 'text' here (rejected above
-        // otherwise). Evolution has no phone-number-variant rejection
-        // mode like Meta's, so this always resolves on the first
-        // variant or throws — the retry loop below just no-ops past it.
+        // Evolution has no phone-number-variant rejection mode like
+        // Meta's, so this always resolves on the first variant or
+        // throws — the retry loop below just no-ops past it.
+        const instanceName = config.evolution_instance_name
+        const instanceToken = decrypt(config.evolution_instance_token)
+
+        if (message_type === 'audio') {
+          const result = await evolutionSendAudioMessage({
+            instanceName,
+            instanceToken,
+            to: phone,
+            audioUrl: media_url,
+          })
+          return result.messageId
+        }
+        if (isMediaKind) {
+          const result = await evolutionSendMediaMessage({
+            instanceName,
+            instanceToken,
+            to: phone,
+            mediatype: message_type as 'image' | 'video' | 'document',
+            mediaUrl: media_url,
+            caption: content_text || undefined,
+            fileName: filename || undefined,
+          })
+          return result.messageId
+        }
         const result = await evolutionSendTextMessage({
-          instanceName: config.evolution_instance_name,
-          instanceToken: decrypt(config.evolution_instance_token),
+          instanceName,
+          instanceToken,
           to: phone,
           text: content_text,
           quoted: evolutionQuoted,

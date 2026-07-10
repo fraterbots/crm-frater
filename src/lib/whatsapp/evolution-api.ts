@@ -260,6 +260,80 @@ export async function sendTextMessage(args: EvolutionSendTextArgs): Promise<Evol
   return { messageId }
 }
 
+export interface EvolutionSendMediaArgs {
+  instanceName: string
+  instanceToken: string
+  to: string
+  mediatype: 'image' | 'video' | 'document'
+  /** Same public chat-media URL already used for the Meta send path —
+   *  confirmed live that Evolution fetches media by URL server-side,
+   *  same as Meta. */
+  mediaUrl: string
+  caption?: string
+  fileName?: string
+}
+
+/**
+ * Sends image/video/document via Evolution's sendMedia endpoint.
+ * Confirmed live against a v2.3.7 instance: `number`/`mediatype`/
+ * `media`/`caption`/`fileName` field names, and that `media` accepts a
+ * plain URL (Evolution fetches it itself, like Meta does).
+ */
+export async function sendMediaMessage(args: EvolutionSendMediaArgs): Promise<EvolutionSendResult> {
+  const { instanceName, instanceToken, to, mediatype, mediaUrl, caption, fileName } = args
+  const { apiUrl } = await getEvolutionCredentials()
+  const response = await fetch(`${apiUrl}/message/sendMedia/${instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: instanceToken },
+    body: JSON.stringify({
+      number: to,
+      mediatype,
+      media: mediaUrl,
+      ...(caption ? { caption } : {}),
+      ...(fileName ? { fileName } : {}),
+    }),
+  })
+  if (!response.ok) {
+    await throwEvolutionError(response, `Evolution API error: ${response.status}`)
+  }
+  const data = await response.json()
+  const messageId = data?.key?.id
+  if (!messageId) {
+    throw new Error('Evolution API did not return a message id')
+  }
+  return { messageId }
+}
+
+export interface EvolutionSendAudioArgs {
+  instanceName: string
+  instanceToken: string
+  to: string
+  audioUrl: string
+}
+
+/**
+ * Voice notes go through a dedicated endpoint (not sendMedia with
+ * mediatype='audio') — confirmed live against a v2.3.7 instance.
+ */
+export async function sendAudioMessage(args: EvolutionSendAudioArgs): Promise<EvolutionSendResult> {
+  const { instanceName, instanceToken, to, audioUrl } = args
+  const { apiUrl } = await getEvolutionCredentials()
+  const response = await fetch(`${apiUrl}/message/sendWhatsAppAudio/${instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: instanceToken },
+    body: JSON.stringify({ number: to, audio: audioUrl }),
+  })
+  if (!response.ok) {
+    await throwEvolutionError(response, `Evolution API error: ${response.status}`)
+  }
+  const data = await response.json()
+  const messageId = data?.key?.id
+  if (!messageId) {
+    throw new Error('Evolution API did not return a message id')
+  }
+  return { messageId }
+}
+
 export interface EvolutionSendReactionArgs {
   instanceName: string
   /** Per-instance token — NOT the admin key, same as sendTextMessage. */
