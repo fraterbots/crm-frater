@@ -180,6 +180,50 @@ export interface EvolutionSendTextArgs {
   text: string
 }
 
+export interface EvolutionMediaKey {
+  id: string
+  fromMe: boolean
+  remoteJid: string
+}
+
+export interface EvolutionMediaResult {
+  base64: string
+  mimetype: string
+  fileName: string
+}
+
+/**
+ * Decrypts and downloads the media for an inbound message. Confirmed
+ * live against a v2.3.7 instance — only the message `key` is needed
+ * (not the full message object some Evolution docs suggest), and the
+ * response carries the decoded base64 directly, no separate
+ * CDN-fetch step required.
+ */
+export async function getBase64FromMediaMessage(args: {
+  instanceName: string
+  messageKey: EvolutionMediaKey
+}): Promise<EvolutionMediaResult> {
+  const { apiUrl, adminKey } = await getEvolutionCredentials()
+
+  const response = await fetch(
+    `${apiUrl}/chat/getBase64FromMediaMessage/${args.instanceName}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: adminKey },
+      body: JSON.stringify({ message: { key: args.messageKey }, convertToMp4: false }),
+    },
+  )
+  if (!response.ok) {
+    await throwEvolutionError(response, `Evolution API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return {
+    base64: data.base64 as string,
+    mimetype: data.mimetype as string,
+    fileName: data.fileName as string,
+  }
+}
+
 export async function sendTextMessage(args: EvolutionSendTextArgs): Promise<EvolutionSendResult> {
   const { instanceName, instanceToken, to, text } = args
   // Only needs the base URL, not the admin key — this call authenticates

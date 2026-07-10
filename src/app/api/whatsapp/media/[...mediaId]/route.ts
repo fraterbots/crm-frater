@@ -1,14 +1,36 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
+// Lazy service-role client — only used for the Evolution branch below,
+// to read from the private `evolution-media` bucket (migration 035),
+// which has no storage.objects policies for the anon/authenticated role.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _adminClient: any = null
+function supabaseAdmin() {
+  if (!_adminClient) {
+    _adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    )
+  }
+  return _adminClient
+}
+
+/**
+ * A catch-all (not a single [mediaId] segment) because Evolution-sourced
+ * media ids embed a `/`-separated storage path — see the 'evolution:'
+ * branch below.
+ */
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ mediaId: string }> }
+  { params }: { params: Promise<{ mediaId: string[] }> }
 ) {
   try {
-    const { mediaId } = await params
+    const { mediaId: mediaIdParts } = await params
+    const mediaId = mediaIdParts?.join('/')
 
     if (!mediaId) {
       return NextResponse.json(
@@ -48,7 +70,39 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
+    // Evolution-sourced media: 'evolution:<account_id>/<file>', written
+    // by the Evolution webhook (src/app/api/whatsapp/evolution-webhook)
+    // into the private `evolution-media` bucket. Verify the embedded
+    // account matches the caller's own — RLS on messages/conversations
+    // already prevents seeing another account's conversation in the
+    // first place, this is defense in depth at the storage layer.
+    if (mediaId.startsWith('evolution:')) {
+      const storagePath = mediaId.slice('evolution:'.length)
+      const ownerAccountId = storagePath.split('/')[0]
+      if (ownerAccountId !== accountId) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+
+      const { data: file, error: downloadError } = await supabaseAdmin()
+        .storage.from('evolution-media')
+        .download(storagePath)
+
+      if (downloadError || !file) {
+        return NextResponse.json({ error: 'Media not found' }, { status: 404 })
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer())
+      return new Response(new Uint8Array(buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'Cache-Control': 'private, max-age=86400',
+        },
+      })
+    }
+
+    // Meta-sourced media: mediaId is Meta's raw media id — proxy it
+    // live from the Graph API using this account's saved token.
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
