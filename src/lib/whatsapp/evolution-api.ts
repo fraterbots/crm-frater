@@ -178,6 +178,8 @@ export interface EvolutionSendTextArgs {
   instanceToken: string
   to: string
   text: string
+  /** Quoted-reply context — see EvolutionQuoted below. */
+  quoted?: EvolutionQuoted
 }
 
 export interface EvolutionMediaKey {
@@ -224,15 +226,28 @@ export async function getBase64FromMediaMessage(args: {
   }
 }
 
+/**
+ * Quoted-reply context, in the same {key, message} shape Baileys
+ * itself uses for a quoted message — `message` is a best-effort
+ * reconstruction (we only persist plain text, not the parent's raw
+ * WhatsApp payload) so a quoted image/video/audio parent's preview
+ * falls back to its caption/filename text rather than the original
+ * media.
+ */
+export interface EvolutionQuoted {
+  key: EvolutionMediaKey
+  message: { conversation: string }
+}
+
 export async function sendTextMessage(args: EvolutionSendTextArgs): Promise<EvolutionSendResult> {
-  const { instanceName, instanceToken, to, text } = args
+  const { instanceName, instanceToken, to, text, quoted } = args
   // Only needs the base URL, not the admin key — this call authenticates
   // with the per-instance token instead.
   const { apiUrl } = await getEvolutionCredentials()
   const response = await fetch(`${apiUrl}/message/sendText/${instanceName}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: instanceToken },
-    body: JSON.stringify({ number: to, text }),
+    body: JSON.stringify({ number: to, text, ...(quoted ? { quoted } : {}) }),
   })
   if (!response.ok) {
     await throwEvolutionError(response, `Evolution API error: ${response.status}`)
@@ -243,4 +258,26 @@ export async function sendTextMessage(args: EvolutionSendTextArgs): Promise<Evol
     throw new Error('Evolution API did not return a message id')
   }
   return { messageId }
+}
+
+export interface EvolutionSendReactionArgs {
+  instanceName: string
+  /** Per-instance token — NOT the admin key, same as sendTextMessage. */
+  instanceToken: string
+  key: EvolutionMediaKey
+  /** Empty string removes a previously-sent reaction. */
+  reaction: string
+}
+
+export async function sendReaction(args: EvolutionSendReactionArgs): Promise<void> {
+  const { instanceName, instanceToken, key, reaction } = args
+  const { apiUrl } = await getEvolutionCredentials()
+  const response = await fetch(`${apiUrl}/message/sendReaction/${instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: instanceToken },
+    body: JSON.stringify({ key, reaction }),
+  })
+  if (!response.ok) {
+    await throwEvolutionError(response, `Evolution API error: ${response.status}`)
+  }
 }

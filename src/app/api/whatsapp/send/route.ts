@@ -6,7 +6,10 @@ import {
   sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
-import { sendTextMessage as evolutionSendTextMessage } from '@/lib/whatsapp/evolution-api'
+import {
+  sendTextMessage as evolutionSendTextMessage,
+  type EvolutionQuoted,
+} from '@/lib/whatsapp/evolution-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
@@ -222,10 +225,17 @@ export async function POST(request: Request) {
     // parent must belong to this same conversation — otherwise a caller
     // could quote messages they can't see by guessing UUIDs.
     let contextMessageId: string | undefined
+    // Evolution-only: quoted-reply context in Baileys's {key, message}
+    // shape (see EvolutionQuoted). `message` is a best-effort
+    // reconstruction from our own stored plain text — we don't persist
+    // the parent's raw WhatsApp payload, so a quoted media message's
+    // preview falls back to caption/filename text rather than the
+    // original media.
+    let evolutionQuoted: EvolutionQuoted | undefined
     if (reply_to_message_id) {
       const { data: parent, error: parentError } = await supabase
         .from('messages')
-        .select('message_id, conversation_id')
+        .select('message_id, conversation_id, content_text, sender_type')
         .eq('id', reply_to_message_id)
         .eq('conversation_id', conversation_id)
         .maybeSingle()
@@ -237,14 +247,24 @@ export async function POST(request: Request) {
         )
       }
       if (!parent.message_id) {
-        // Parent never reached Meta (still in 'sending' or 'failed') — we
-        // can't quote it on WhatsApp. Send without context rather than
+        // Parent never reached WhatsApp (still in 'sending' or 'failed')
+        // — we can't quote it. Send without context rather than
         // dropping the message entirely.
         console.warn(
-          '[whatsapp/send] reply target has no Meta message_id; sending without context'
+          '[whatsapp/send] reply target has no WhatsApp message_id; sending without context'
         )
       } else {
         contextMessageId = parent.message_id
+        if (config.provider === 'evolution') {
+          evolutionQuoted = {
+            key: {
+              remoteJid: `${sanitizedPhone}@s.whatsapp.net`,
+              fromMe: parent.sender_type !== 'customer',
+              id: parent.message_id,
+            },
+            message: { conversation: parent.content_text || '' },
+          }
+        }
       }
     }
 
@@ -298,6 +318,7 @@ export async function POST(request: Request) {
           instanceToken: decrypt(config.evolution_instance_token),
           to: phone,
           text: content_text,
+          quoted: evolutionQuoted,
         })
         return result.messageId
       }

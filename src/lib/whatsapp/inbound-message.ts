@@ -119,6 +119,31 @@ export async function findOrCreateConversation(
   return newConv
 }
 
+/**
+ * Resolve a provider-side message_id into the matching internal UUID,
+ * scoped to one conversation. Returns null when we never received the
+ * parent (e.g. a reaction/reply to a message older than this CRM
+ * install). Mirrors src/app/api/whatsapp/webhook/route.ts's private
+ * lookupInternalIdByMetaId — shared here so the Evolution webhook
+ * doesn't duplicate it, without touching the Meta webhook's own copy.
+ */
+export async function lookupInternalMessageId(
+  waMessageId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('messages')
+    .select('id')
+    .eq('message_id', waMessageId)
+    .eq('conversation_id', conversationId)
+    .maybeSingle()
+  if (error) {
+    console.error('[inbound-message] lookupInternalMessageId failed:', error.message)
+    return null
+  }
+  return data?.id ?? null
+}
+
 async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
   try {
     // Most recent outbound broadcast in this account that hasn't

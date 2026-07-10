@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
-import { findOrCreateContact, findOrCreateConversation, processInboundMessage } from '@/lib/whatsapp/inbound-message'
+import {
+  findOrCreateContact,
+  findOrCreateConversation,
+  processInboundMessage,
+  lookupInternalMessageId,
+} from '@/lib/whatsapp/inbound-message'
 import { getBase64FromMediaMessage, type EvolutionMediaKey } from '@/lib/whatsapp/evolution-api'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing —
@@ -106,8 +111,9 @@ async function downloadAndStoreEvolutionMedia(args: {
  * whatsapp_config.access_token.
  *
  * Text + image/video/audio/document (+ sticker, folded into 'image')
- * are supported. Group chats (@g.us) and masked/linked JIDs (@lid,
- * no `remoteJidAlt` real-number fallback) are skipped, not errored.
+ * + reactions are supported. Group chats (@g.us) and masked/linked
+ * JIDs (@lid, no `remoteJidAlt` real-number fallback) are skipped,
+ * not errored.
  */
 export async function POST(
   request: Request,
@@ -179,6 +185,58 @@ export async function POST(
 
   const phone = normalizePhone(remoteJid.replace('@s.whatsapp.net', ''))
   const msg = data?.message ?? {}
+  const contactName = (data?.pushName as string | undefined) || phone
+
+  // Resolved up front (rather than just before processInboundMessage)
+  // because the reaction branch below needs them too, and returns
+  // early without ever reaching the text/media handling.
+  const contactOutcome = await findOrCreateContact(config.account_id, config.user_id, phone, contactName)
+  if (!contactOutcome) return NextResponse.json({ ok: true })
+
+  const conversation = await findOrCreateConversation(
+    config.account_id,
+    config.user_id,
+    contactOutcome.contact.id,
+  )
+  if (!conversation) return NextResponse.json({ ok: true })
+
+  // Reactions aren't messages — mirror src/app/api/whatsapp/webhook's
+  // handleReaction: upsert/delete on message_reactions, never insert
+  // into `messages`, and return before any content-type handling.
+  const reactionInner = msg.reactionMessage as { key?: { id?: string }; text?: string } | undefined
+  if (reactionInner) {
+    const targetWaId = reactionInner.key?.id
+    if (!targetWaId) return NextResponse.json({ ok: true })
+
+    const targetInternalId = await lookupInternalMessageId(targetWaId, conversation.id)
+    if (!targetInternalId) {
+      console.warn('[evolution-webhook] reaction target message not found; skipping', targetWaId)
+      return NextResponse.json({ ok: true })
+    }
+
+    if (!reactionInner.text) {
+      await supabaseAdmin()
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', targetInternalId)
+        .eq('actor_type', 'customer')
+        .eq('actor_id', contactOutcome.contact.id)
+    } else {
+      await supabaseAdmin()
+        .from('message_reactions')
+        .upsert(
+          {
+            message_id: targetInternalId,
+            conversation_id: conversation.id,
+            actor_type: 'customer',
+            actor_id: contactOutcome.contact.id,
+            emoji: reactionInner.text,
+          },
+          { onConflict: 'message_id,actor_type,actor_id' },
+        )
+    }
+    return NextResponse.json({ ok: true })
+  }
 
   // Prefer the explicit messageType field (present on every real
   // payload we've seen) and fall back to structurally checking which
@@ -218,23 +276,12 @@ export async function POST(
     }
   }
 
-  const contactName = (data?.pushName as string | undefined) || phone
   const timestampRaw = data?.messageTimestamp
   const timestampSeconds =
     typeof timestampRaw === 'string' ? parseInt(timestampRaw, 10) : Number(timestampRaw)
   const createdAt = Number.isFinite(timestampSeconds) && timestampSeconds > 0
     ? new Date(timestampSeconds * 1000)
     : new Date()
-
-  const contactOutcome = await findOrCreateContact(config.account_id, config.user_id, phone, contactName)
-  if (!contactOutcome) return NextResponse.json({ ok: true })
-
-  const conversation = await findOrCreateConversation(
-    config.account_id,
-    config.user_id,
-    contactOutcome.contact.id,
-  )
-  if (!conversation) return NextResponse.json({ ok: true })
 
   await processInboundMessage({
     accountId: config.account_id,
