@@ -103,6 +103,61 @@ async function downloadAndStoreEvolutionMedia(args: {
   }
 }
 
+interface ParsedEvolutionContent {
+  contentType: 'text' | 'image' | 'video' | 'audio' | 'document'
+  contentText: string | null
+  mediaUrl: string | null
+}
+
+/**
+ * Classifies a MESSAGES_UPSERT payload's content and, for media,
+ * downloads+stores it. Returns null for a message kind we don't
+ * recognize (caller decides whether/how to log that). Shared between
+ * the customer-inbound path and the phone-originated-echo path below
+ * so the two don't duplicate the same parsing logic.
+ */
+async function parseEvolutionMessageContent(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any,
+  config: { evolution_instance_name: string | null; account_id: string; id: string },
+): Promise<ParsedEvolutionContent | null> {
+  const msg = data?.message ?? {}
+  const waMessageId = data?.key?.id as string
+
+  const messageTypeField = data?.messageType as string | undefined
+  const mediaKind =
+    (messageTypeField && messageTypeField in MEDIA_TYPE_MAP
+      ? messageTypeField
+      : Object.keys(MEDIA_TYPE_MAP).find((key) => key in msg)) ?? null
+
+  if (mediaKind) {
+    const contentType = MEDIA_TYPE_MAP[mediaKind]
+    const inner = msg[mediaKind] ?? {}
+    const contentText =
+      (inner.caption as string | undefined) ?? (inner.fileName as string | undefined) ?? null
+
+    let mediaUrl: string | null = null
+    if (!config.evolution_instance_name) {
+      console.warn('[evolution-webhook] media message with no instance name on config', config.id)
+    } else {
+      mediaUrl = await downloadAndStoreEvolutionMedia({
+        instanceName: config.evolution_instance_name,
+        accountId: config.account_id,
+        waMessageId,
+        key: data.key,
+      })
+    }
+    // contentType/contentText still returned even if mediaUrl is null —
+    // the bubble renders a "media unavailable" state rather than
+    // dropping the message.
+    return { contentType, contentText, mediaUrl }
+  }
+
+  const contentText = msg.conversation ?? msg.extendedTextMessage?.text ?? null
+  if (contentText === null) return null
+  return { contentType: 'text', contentText, mediaUrl: null }
+}
+
 /**
  * Inbound webhook for the "unofficial" WhatsApp connection (Evolution
  * API). Unlike Meta's webhook, Evolution does not sign its requests
@@ -111,9 +166,11 @@ async function downloadAndStoreEvolutionMedia(args: {
  * whatsapp_config.access_token.
  *
  * Text + image/video/audio/document (+ sticker, folded into 'image')
- * + reactions are supported. Group chats (@g.us) and masked/linked
- * JIDs (@lid, no `remoteJidAlt` real-number fallback) are skipped,
- * not errored.
+ * + reactions are supported, both from the customer AND — mirrored in
+ * so the agent's own chat view stays in sync — sent directly from the
+ * paired phone's WhatsApp app instead of through the CRM composer.
+ * Group chats (@g.us) and masked/linked JIDs (@lid, no
+ * `remoteJidAlt` real-number fallback) are skipped, not errored.
  */
 export async function POST(
   request: Request,
@@ -169,9 +226,7 @@ export async function POST(
   const fromMe = data?.key?.fromMe as boolean | undefined
   const waMessageId = data?.key?.id as string | undefined
 
-  // Our own sends echo back through this same event in Evolution —
-  // skip them, they're already inserted by the outbound send path.
-  if (!remoteJid || fromMe || !waMessageId) {
+  if (!remoteJid || !waMessageId) {
     return NextResponse.json({ ok: true })
   }
 
@@ -185,11 +240,17 @@ export async function POST(
 
   const phone = normalizePhone(remoteJid.replace('@s.whatsapp.net', ''))
   const msg = data?.message ?? {}
-  const contactName = (data?.pushName as string | undefined) || phone
+
+  // For a fromMe event, Evolution's pushName is the ACCOUNT OWNER's
+  // own WhatsApp display name, not the customer's — never use it to
+  // (re)name the contact, only as a same-value fallback for a
+  // brand-new contact record.
+  const contactName = fromMe ? '' : (data?.pushName as string | undefined) || phone
 
   // Resolved up front (rather than just before processInboundMessage)
-  // because the reaction branch below needs them too, and returns
-  // early without ever reaching the text/media handling.
+  // because the reaction and fromMe-mirror branches below need them
+  // too, and return early without ever reaching the customer-inbound
+  // handling further down.
   const contactOutcome = await findOrCreateContact(config.account_id, config.user_id, phone, contactName)
   if (!contactOutcome) return NextResponse.json({ ok: true })
 
@@ -199,6 +260,61 @@ export async function POST(
     contactOutcome.contact.id,
   )
   if (!conversation) return NextResponse.json({ ok: true })
+
+  if (fromMe) {
+    // Two cases produce a fromMe event: (a) an echo of a message the
+    // CRM itself just sent via /api/whatsapp/send — already inserted
+    // there under this same waMessageId, so skip to avoid a duplicate
+    // bubble — or (b) a message sent directly from the paired phone's
+    // WhatsApp app, bypassing the CRM entirely, which needs mirroring
+    // in so the agent sees their own reply here too.
+    const alreadyKnown = await lookupInternalMessageId(waMessageId, conversation.id)
+    if (alreadyKnown) return NextResponse.json({ ok: true })
+
+    // Reactions sent from the phone aren't mirrored yet (would need
+    // their own actor_type='agent' handling) — skip rather than
+    // mis-record as a customer reaction.
+    if (msg.reactionMessage) return NextResponse.json({ ok: true })
+
+    const parsed = await parseEvolutionMessageContent(data, config)
+    if (!parsed) {
+      console.warn('[evolution-webhook] skipping unrecognized phone-originated message kind')
+      return NextResponse.json({ ok: true })
+    }
+
+    const timestampRaw = data?.messageTimestamp
+    const timestampSeconds =
+      typeof timestampRaw === 'string' ? parseInt(timestampRaw, 10) : Number(timestampRaw)
+    const createdAt = Number.isFinite(timestampSeconds) && timestampSeconds > 0
+      ? new Date(timestampSeconds * 1000)
+      : new Date()
+
+    const { error: insertError } = await supabaseAdmin().from('messages').insert({
+      conversation_id: conversation.id,
+      sender_type: 'agent',
+      content_type: parsed.contentType,
+      content_text: parsed.contentText,
+      media_url: parsed.mediaUrl,
+      message_id: waMessageId,
+      status: 'sent',
+      created_at: createdAt.toISOString(),
+    })
+    if (insertError) {
+      console.error('[evolution-webhook] phone-originated message insert failed:', insertError.message)
+      return NextResponse.json({ ok: true })
+    }
+
+    await supabaseAdmin()
+      .from('conversations')
+      .update({
+        last_message_text: parsed.contentText || `[${parsed.contentType}]`,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', conversation.id)
+
+    return NextResponse.json({ ok: true })
+  }
 
   // Reactions aren't messages — mirror src/app/api/whatsapp/webhook's
   // handleReaction: upsert/delete on message_reactions, never insert
@@ -238,43 +354,12 @@ export async function POST(
     return NextResponse.json({ ok: true })
   }
 
-  // Prefer the explicit messageType field (present on every real
-  // payload we've seen) and fall back to structurally checking which
-  // media key is present, in case a future Evolution version omits it.
-  const messageTypeField = data?.messageType as string | undefined
-  const mediaKind =
-    (messageTypeField && messageTypeField in MEDIA_TYPE_MAP
-      ? messageTypeField
-      : Object.keys(MEDIA_TYPE_MAP).find((key) => key in msg)) ?? null
-
-  let contentType: 'text' | 'image' | 'video' | 'audio' | 'document' = 'text'
-  let contentText: string | null = null
-  let mediaUrl: string | null = null
-
-  if (mediaKind) {
-    contentType = MEDIA_TYPE_MAP[mediaKind]
-    const inner = msg[mediaKind] ?? {}
-    contentText = (inner.caption as string | undefined) ?? (inner.fileName as string | undefined) ?? null
-
-    if (!config.evolution_instance_name) {
-      console.warn('[evolution-webhook] media message with no instance name on config', config.id)
-    } else {
-      mediaUrl = await downloadAndStoreEvolutionMedia({
-        instanceName: config.evolution_instance_name,
-        accountId: config.account_id,
-        waMessageId,
-        key: data.key,
-      })
-    }
-    // Falls through even if mediaUrl is null — the bubble renders a
-    // "media unavailable" state rather than dropping the message.
-  } else {
-    contentText = msg.conversation ?? msg.extendedTextMessage?.text ?? null
-    if (contentText === null) {
-      console.warn('[evolution-webhook] skipping unrecognized message kind from', phone)
-      return NextResponse.json({ ok: true })
-    }
+  const parsed = await parseEvolutionMessageContent(data, config)
+  if (!parsed) {
+    console.warn('[evolution-webhook] skipping unrecognized message kind from', phone)
+    return NextResponse.json({ ok: true })
   }
+  const { contentType, contentText, mediaUrl } = parsed
 
   const timestampRaw = data?.messageTimestamp
   const timestampSeconds =
