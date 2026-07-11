@@ -509,6 +509,21 @@ export default function InboxPage() {
     setMessages(loaded);
   }, []);
 
+  // Merges a page fetched by MessageThread's "load earlier messages"
+  // (or a resync-of-the-same-conversation refetch) into the existing
+  // array instead of replacing it — dedupe by id, then re-sort, so it
+  // works regardless of whether the incoming page is older or newer
+  // than what's already loaded.
+  const handleOlderMessagesLoaded = useCallback((page: Message[]) => {
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]));
+      for (const m of page) byId.set(m.id, m);
+      return Array.from(byId.values()).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+    });
+  }, []);
+
   const handleNewMessage = useCallback((msg: Message) => {
     setMessages((prev) => {
       if (prev.some((m) => m.id === msg.id)) return prev;
@@ -627,6 +642,7 @@ export default function InboxPage() {
             contact={activeContact}
             messages={messages}
             onMessagesLoaded={handleMessagesLoaded}
+            onOlderMessagesLoaded={handleOlderMessagesLoaded}
             onNewMessage={handleNewMessage}
             onUpdateMessage={handleUpdateMessage}
             onStatusChange={handleStatusChange}
