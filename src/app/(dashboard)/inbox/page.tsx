@@ -17,6 +17,20 @@ import { useTranslation } from "@/lib/i18n/use-translation";
 // across reloads and sessions (device-scoped, like the theme prefs).
 const CONTACT_PANEL_STORAGE_KEY = "frater:inbox:contact-panel-open";
 
+// The initial fetch (ConversationList) orders by last_message_at desc,
+// but realtime patches below only update the matching row IN PLACE —
+// without this, a conversation that gets a new message stays wherever
+// it was in the array instead of jumping to the top, so the list
+// silently drifts out of "most recent interaction first" order the
+// longer a session runs.
+function sortByLastMessageDesc(list: Conversation[]): Conversation[] {
+  return [...list].sort((a, b) => {
+    const at = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+    const bt = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+    return bt - at;
+  });
+}
+
 export default function InboxPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -226,18 +240,20 @@ export default function InboxPage() {
         // always read false here.
         if (knownConvIdsRef.current.has(newMsg.conversation_id)) {
           setConversations((prev) =>
-            prev.map((c) =>
-              c.id === newMsg.conversation_id
-                ? {
-                    ...c,
-                    last_message_text: newMsg.content_text ?? "",
-                    last_message_at: newMsg.created_at,
-                    unread_count:
-                      activeConversation?.id === newMsg.conversation_id
-                        ? 0
-                        : c.unread_count + 1,
-                  }
-                : c,
+            sortByLastMessageDesc(
+              prev.map((c) =>
+                c.id === newMsg.conversation_id
+                  ? {
+                      ...c,
+                      last_message_text: newMsg.content_text ?? "",
+                      last_message_at: newMsg.created_at,
+                      unread_count:
+                        activeConversation?.id === newMsg.conversation_id
+                          ? 0
+                          : c.unread_count + 1,
+                    }
+                  : c,
+              ),
             ),
           );
         } else {
@@ -293,14 +309,16 @@ export default function InboxPage() {
           // UPDATE to round-trip. Non-active convs take the value as-is.
           const isActive = activeConversation?.id === conv.id;
           setConversations((prev) =>
-            prev.map((c) =>
-              c.id === conv.id
-                ? {
-                    ...c,
-                    ...conv,
-                    unread_count: isActive ? 0 : conv.unread_count,
-                  }
-                : c,
+            sortByLastMessageDesc(
+              prev.map((c) =>
+                c.id === conv.id
+                  ? {
+                      ...c,
+                      ...conv,
+                      unread_count: isActive ? 0 : conv.unread_count,
+                    }
+                  : c,
+              ),
             ),
           );
         } else {
