@@ -15,9 +15,16 @@ import {
   DollarSign,
   StickyNote,
   Plus,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useTranslation } from "@/lib/i18n/use-translation";
 
 interface ContactSidebarProps {
@@ -31,6 +38,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [savingTagId, setSavingTagId] = useState<string | null>(null);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -39,8 +48,9 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
     const supabase = createClient();
 
-    // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    // Fetch deals, notes, all-tags (for the add-tag menu) and this
+    // contact's tags in parallel.
+    const [dealsRes, notesRes, allTagsRes, tagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -51,6 +61,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         .select("*")
         .eq("contact_id", contact.id)
         .order("created_at", { ascending: false }),
+      supabase.from("tags").select("*").order("name"),
       supabase
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
@@ -59,6 +70,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
     if (dealsRes.data) setDeals(dealsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
+    if (allTagsRes.data) setAllTags(allTagsRes.data);
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -69,6 +81,42 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       setTags(mapped);
     }
   }, [contact]);
+
+  // Mirrors ContactDetailView's toggleTag (src/components/contacts/
+  // contact-detail-view.tsx) — same contact_tags insert/delete, just
+  // reachable from the inbox sidebar so adding a tag doesn't require
+  // leaving the conversation.
+  const toggleTag = useCallback(
+    async (tag: Tag) => {
+      if (!contact || savingTagId) return;
+      setSavingTagId(tag.id);
+
+      const supabase = createClient();
+      const existing = tags.find((t) => t.id === tag.id);
+
+      if (existing) {
+        const { error } = await supabase
+          .from("contact_tags")
+          .delete()
+          .eq("contact_id", contact.id)
+          .eq("tag_id", tag.id);
+        if (!error) {
+          setTags((prev) => prev.filter((t) => t.id !== tag.id));
+        }
+      } else {
+        const { data, error } = await supabase
+          .from("contact_tags")
+          .insert({ contact_id: contact.id, tag_id: tag.id })
+          .select("id")
+          .single();
+        if (!error && data) {
+          setTags((prev) => [...prev, { ...tag, contact_tag_id: data.id }]);
+        }
+      }
+      setSavingTagId(null);
+    },
+    [contact, tags, savingTagId],
+  );
 
   // Load on contact change. setContactData/setTags run inside async
   // Supabase callbacks, not synchronously in the effect body.
@@ -180,9 +228,45 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
           {/* Tags */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <TagIcon className="h-3 w-3" />
-              {t("inbox.sidebar.tagsHeading")}
+            <div className="flex items-center justify-between gap-2 px-1">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <TagIcon className="h-3 w-3" />
+                {t("inbox.sidebar.tagsHeading")}
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label={t("inbox.sidebar.addTag")}
+                  className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {allTags.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      {t("inbox.sidebar.noTagsAvailable")}
+                    </div>
+                  ) : (
+                    allTags.map((tag) => {
+                      const selected = tags.some((t2) => t2.id === tag.id);
+                      return (
+                        <DropdownMenuItem
+                          key={tag.id}
+                          onClick={() => toggleTag(tag)}
+                          disabled={savingTagId === tag.id}
+                          className="flex items-center gap-2 text-sm text-popover-foreground"
+                        >
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="flex-1 truncate">{tag.name}</span>
+                          {selected && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                        </DropdownMenuItem>
+                      );
+                    })
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {tags.length === 0 ? (
@@ -191,13 +275,22 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 tags.map((tag) => (
                   <span
                     key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    className="flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-[10px] font-medium"
                     style={{
                       backgroundColor: `${tag.color}20`,
                       color: tag.color,
                     }}
                   >
                     {tag.name}
+                    <button
+                      type="button"
+                      onClick={() => toggleTag(tag)}
+                      disabled={savingTagId === tag.id}
+                      aria-label={t("inbox.sidebar.removeTag", { name: tag.name })}
+                      className="rounded-full p-0.5 hover:bg-black/10"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
                   </span>
                 ))
               )}
