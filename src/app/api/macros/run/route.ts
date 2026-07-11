@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { engineSendText } from '@/lib/automations/meta-send'
+import { closeConversationAndMaybeSendCsat } from '@/lib/conversations/close'
 import type { Macro, MacroAction } from '@/types'
 
 /**
@@ -98,15 +99,23 @@ export async function POST(request: Request) {
       }
 
       case 'change_status': {
-        const { error } = await supabase
-          .from('conversations')
-          .update({
-            status: action.status,
-            snoozed_until: null,
-          })
-          .eq('id', conversationId)
-        if (error) {
-          return macroStepError('change_status', error.message, ranSteps)
+        // 'closed' goes through the shared close helper (Fase 12) so a
+        // macro that closes a conversation can also trigger the CSAT
+        // survey send, same as the inbox button and the automations
+        // engine's close_conversation step.
+        if (action.status === 'closed') {
+          await closeConversationAndMaybeSendCsat(conversationId, accountId)
+        } else {
+          const { error } = await supabase
+            .from('conversations')
+            .update({
+              status: action.status,
+              snoozed_until: null,
+            })
+            .eq('id', conversationId)
+          if (error) {
+            return macroStepError('change_status', error.message, ranSteps)
+          }
         }
         ranSteps.push('change_status')
         break

@@ -54,7 +54,9 @@ import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
+import { MergeContactsDialog } from '@/components/contacts/merge-contacts-dialog';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -67,6 +69,7 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const supabase = createClient();
   const { t, locale } = useTranslation();
+  const { accountId } = useAuth();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -93,6 +96,7 @@ export default function ContactsPage() {
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   // All tags for display
   const [tagsMap, setTagsMap] = useState<Record<string, Tag>>({});
@@ -522,6 +526,18 @@ export default function ContactsPage() {
             >
               {t('contacts.page.clear')}
             </Button>
+            {selected.size === 2 && (
+              <GatedButton
+                variant="outline"
+                size="sm"
+                canAct={canEdit}
+                gateReason="merge contacts"
+                onClick={() => setMergeOpen(true)}
+              >
+                <Users className="size-4" />
+                {t('contacts.merge.button')}
+              </GatedButton>
+            )}
             <GatedButton
               variant="destructive"
               size="sm"
@@ -851,6 +867,27 @@ export default function ContactsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Merge Contacts */}
+      {mergeOpen && selected.size === 2 && accountId && (() => {
+        const [idA, idB] = [...selected];
+        const contactA = contacts.find((c) => c.id === idA);
+        const contactB = contacts.find((c) => c.id === idB);
+        if (!contactA || !contactB) return null;
+        return (
+          <MergeContactsDialog
+            open={mergeOpen}
+            onOpenChange={setMergeOpen}
+            contactA={contactA}
+            contactB={contactB}
+            accountId={accountId}
+            onMerged={() => {
+              setSelected(new Set());
+              fetchContacts();
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

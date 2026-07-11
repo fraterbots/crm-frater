@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus } from "@/types";
-import { Search, ChevronDown } from "lucide-react";
+import { Search, ChevronDown, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
@@ -311,6 +311,11 @@ function ConversationItem({
             {conversation.last_message_text || t("inbox.conversationList.noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            {conversation.sla_breached && (
+              <span title={t("inbox.conversationList.slaBreached")}>
+                <AlertTriangle className="size-3.5 text-red-500" />
+              </span>
+            )}
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}

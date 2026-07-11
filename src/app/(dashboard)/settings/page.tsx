@@ -20,6 +20,11 @@ import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel'
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { TeamsManager } from '@/components/settings/teams-manager';
+import { BusinessHoursManager } from '@/components/settings/business-hours-manager';
+import { AuditLogManager } from '@/components/settings/audit-log-manager';
+import { SlaPoliciesManager } from '@/components/settings/sla-policies-manager';
+import { CsatManager } from '@/components/settings/csat-manager';
+import { WebhooksManager } from '@/components/settings/webhooks-manager';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import {
   resolveSection,
@@ -70,6 +75,11 @@ export default function SettingsPage() {
     deals: <DealsSettings />,
     members: <MembersTab />,
     teams: <TeamsManager />,
+    'business-hours': <BusinessHoursManager />,
+    'sla-policies': <SlaPoliciesManager />,
+    csat: <CsatManager />,
+    'audit-log': <AuditLogManager />,
+    webhooks: <WebhooksManager />,
     api: <ApiKeysSettings />,
   };
 

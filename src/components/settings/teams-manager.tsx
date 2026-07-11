@@ -117,6 +117,20 @@ export function TeamsManager() {
     await fetchAll();
   }
 
+  async function toggleAutoAssign(team: Team) {
+    setBusyId(team.id);
+    const { error } = await supabase
+      .from('teams')
+      .update({ auto_assign_enabled: !team.auto_assign_enabled })
+      .eq('id', team.id);
+    setBusyId(null);
+    if (error) {
+      toast.error(t('settings.teams.errorSave'));
+      return;
+    }
+    await fetchAll();
+  }
+
   async function handleDelete(team: Team) {
     if (!window.confirm(t('settings.teams.confirmDelete', { name: team.name }))) return;
     setBusyId(team.id);
@@ -217,6 +231,16 @@ export function TeamsManager() {
                         ? t('settings.teams.noMembers')
                         : teamMembers.map((m) => profileName(m.user_id)).join(', ')}
                     </p>
+                    <label className="mt-2 flex items-center gap-2">
+                      <Checkbox
+                        checked={team.auto_assign_enabled}
+                        disabled={busyId === team.id}
+                        onCheckedChange={() => toggleAutoAssign(team)}
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        {t('settings.teams.autoAssignEnabled')}
+                      </span>
+                    </label>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <Button

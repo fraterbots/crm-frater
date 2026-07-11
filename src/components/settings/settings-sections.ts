@@ -1,4 +1,5 @@
 import {
+  Clock,
   Coins,
   FileText,
   KeyRound,
@@ -8,10 +9,14 @@ import {
   Palette,
   PlugZap,
   Shield,
+  ShieldCheck,
+  Smile,
   Tags,
+  Timer,
   User,
   Users,
   UsersRound,
+  Webhook,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -40,6 +45,11 @@ export const SETTINGS_SECTIONS = [
   'deals',
   'members',
   'teams',
+  'business-hours',
+  'sla-policies',
+  'csat',
+  'audit-log',
+  'webhooks',
   'api',
 ] as const;
 
@@ -73,6 +83,11 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   deals: { id: 'deals', label: 'settings.sections.deals', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'settings.sections.members', icon: UsersRound, group: 'workspace' },
   teams: { id: 'teams', label: 'settings.sections.teams', icon: Users, group: 'workspace' },
+  'business-hours': { id: 'business-hours', label: 'settings.sections.businessHours', icon: Clock, group: 'workspace' },
+  'sla-policies': { id: 'sla-policies', label: 'settings.sections.sla', icon: Timer, group: 'workspace' },
+  csat: { id: 'csat', label: 'settings.sections.csat', icon: Smile, group: 'workspace' },
+  'audit-log': { id: 'audit-log', label: 'settings.sections.auditLog', icon: ShieldCheck, group: 'workspace' },
+  webhooks: { id: 'webhooks', label: 'settings.sections.webhooks', icon: Webhook, group: 'workspace' },
   api: { id: 'api', label: 'settings.sections.api', icon: KeyRound, group: 'workspace' },
 };
 

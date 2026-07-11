@@ -18,6 +18,8 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { sendOutboundText } from '@/lib/whatsapp/send-text'
+import { dispatchWebhooks } from '@/lib/webhooks/dispatch'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ContactRow = any
@@ -81,6 +83,7 @@ export async function findOrCreateContact(
     return null
   }
 
+  dispatchWebhooks(accountId, 'contact.created', { contact_id: newContact.id, phone, name: newContact.name })
   return { contact: newContact, wasCreated: true }
 }
 
@@ -100,6 +103,8 @@ export async function findOrCreateConversation(
     return existing
   }
 
+  const slaFields = await resolveDefaultSla(accountId)
+
   // Same tenancy + audit split as findOrCreateContact above.
   const { data: newConv, error: createError } = await supabaseAdmin()
     .from('conversations')
@@ -107,6 +112,7 @@ export async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      ...slaFields,
     })
     .select()
     .single()
@@ -116,7 +122,81 @@ export async function findOrCreateConversation(
     return null
   }
 
-  return newConv
+  dispatchWebhooks(accountId, 'conversation.created', { conversation_id: newConv.id, contact_id: contactId })
+
+  const assigned = await autoAssignConversation(accountId, newConv.id)
+  return assigned ?? newConv
+}
+
+/**
+ * Resolves the account's default SLA policy (if any) into the columns
+ * a newly-created conversation should carry. v1 due-date math is naive
+ * (`now() + minutes`, no business-hours calendar) — see migration 040
+ * for the documented scope cut.
+ */
+async function resolveDefaultSla(
+  accountId: string,
+): Promise<Record<string, string>> {
+  const { data: policy } = await supabaseAdmin()
+    .from('sla_policies')
+    .select('id, first_response_minutes, resolution_minutes')
+    .eq('account_id', accountId)
+    .eq('is_default', true)
+    .maybeSingle()
+
+  if (!policy) return {}
+
+  const now = Date.now()
+  return {
+    sla_policy_id: policy.id,
+    first_response_due_at: new Date(now + policy.first_response_minutes * 60_000).toISOString(),
+    resolution_due_at: new Date(now + policy.resolution_minutes * 60_000).toISOString(),
+  }
+}
+
+/**
+ * Auto-assigns a freshly-created conversation to a round-robin team, if
+ * the account has one opted in via `teams.auto_assign_enabled`. Ties
+ * broken by `auto_assign_priority` (lowest wins). No-op (returns null)
+ * when no team opts in — assignment stays manual, as it does today.
+ */
+async function autoAssignConversation(
+  accountId: string,
+  conversationId: string,
+): Promise<ConversationRow | null> {
+  const db = supabaseAdmin()
+  const { data: team } = await db
+    .from('teams')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('auto_assign_enabled', true)
+    .order('auto_assign_priority', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!team) return null
+
+  const { data: agentId } = await db.rpc('pick_round_robin_agent', { p_team_id: team.id })
+  if (!agentId) return null
+
+  const { data: updated, error } = await db
+    .from('conversations')
+    .update({ assigned_agent_id: agentId, team_id: team.id })
+    .eq('id', conversationId)
+    .select()
+    .single()
+
+  if (error) {
+    console.error('[inbound-message] autoAssignConversation failed:', error.message)
+    return null
+  }
+
+  dispatchWebhooks(accountId, 'conversation.assigned', {
+    conversation_id: conversationId,
+    assigned_agent_id: agentId,
+    team_id: team.id,
+  })
+  return updated
 }
 
 /**
@@ -253,6 +333,13 @@ export async function processInboundMessage(args: ProcessInboundMessageArgs): Pr
     return
   }
 
+  dispatchWebhooks(accountId, 'message.received', {
+    conversation_id: conversation.id,
+    contact_id: contactId,
+    content_type: contentType,
+    content_text: contentText,
+  })
+
   // A snoozed conversation reopens on any new inbound message — this
   // is the one place guaranteed to run for every inbound message
   // regardless of whether an agent has the realtime channel open
@@ -271,6 +358,34 @@ export async function processInboundMessage(args: ProcessInboundMessageArgs): Pr
 
   if (convError) {
     console.error('Error updating conversation:', convError)
+  }
+
+  // CSAT reply capture (Fase 12): a conversation flagged awaiting_csat
+  // treats the next inbound message as a 1-5 rating instead of a normal
+  // trigger for flows/automations. The message itself is still stored
+  // above (visible in the thread like any other reply) — this only
+  // short-circuits the dispatch that follows.
+  if (conversation.awaiting_csat) {
+    const rating = (contentText ?? '').trim().match(/^[1-5]$/)
+    if (rating) {
+      await supabaseAdmin().from('csat_responses').insert({
+        account_id: accountId,
+        conversation_id: conversation.id,
+        contact_id: contactId,
+        rating: Number(rating[0]),
+      })
+      await supabaseAdmin()
+        .from('conversations')
+        .update({ awaiting_csat: false })
+        .eq('id', conversation.id)
+      await sendOutboundText({
+        accountId,
+        conversationId: conversation.id,
+        contactId,
+        text: 'Obrigado pelo seu feedback!',
+      }).catch((err) => console.error('[csat] thank-you send failed:', err))
+      return
+    }
   }
 
   await flagBroadcastReplyIfAny(accountId, contactId)

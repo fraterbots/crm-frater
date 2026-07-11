@@ -189,15 +189,35 @@ export interface Conversation {
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
+  sla_policy_id?: string | null;
+  first_response_due_at?: string | null;
+  resolution_due_at?: string | null;
+  first_response_at?: string | null;
+  sla_breached?: boolean;
+  awaiting_csat?: boolean;
   created_at: string;
   updated_at: string;
   contact?: Contact;
+}
+
+export interface SlaPolicy {
+  id: string;
+  account_id: string;
+  name: string;
+  first_response_minutes: number;
+  resolution_minutes: number;
+  business_hours_only: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Team {
   id: string;
   account_id: string;
   name: string;
+  auto_assign_enabled: boolean;
+  auto_assign_priority: number;
   created_at: string;
   updated_at: string;
 }
@@ -518,6 +538,8 @@ export interface TagStepConfig {
 export interface AssignConversationStepConfig {
   mode: 'specific' | 'round_robin';
   agent_id?: string;
+  /** Required when mode is 'round_robin' — which team to pick from. */
+  team_id?: string;
 }
 
 export interface UpdateContactFieldStepConfig {
@@ -549,7 +571,8 @@ export type ConditionSubject =
   | 'contact_field'
   | 'tag_presence'
   | 'message_content'
-  | 'time_of_day';
+  | 'time_of_day'
+  | 'business_hours';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;

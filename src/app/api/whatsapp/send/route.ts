@@ -27,6 +27,7 @@ import {
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import { dispatchWebhooks } from '@/lib/webhooks/dispatch'
 
 export async function POST(request: Request) {
   try {
@@ -462,13 +463,23 @@ export async function POST(request: Request) {
       )
     }
 
-    // Update conversation
+    dispatchWebhooks(accountId, 'message.sent', {
+      conversation_id,
+      message_id: messageRecord.id,
+      content_type: message_type,
+      content_text: content_text || null,
+    })
+
+    // Update conversation. first_response_at is a write-once SLA marker —
+    // only set it the first time an agent replies (message_type is 'text'
+    // here doesn't matter; any agent-sent message counts as the response).
     await supabase
       .from('conversations')
       .update({
         last_message_text: content_text || `[${message_type}]`,
         last_message_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        ...(conversation.first_response_at ? {} : { first_response_at: new Date().toISOString() }),
       })
       .eq('id', conversation_id)
 

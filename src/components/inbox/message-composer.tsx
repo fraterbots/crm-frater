@@ -111,6 +111,10 @@ interface MessageComposerProps {
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  /** Throttled by the caller's own logic — this just fires on keystrokes,
+   *  at most every ~1.5s (see lastTypingSentRef below), for the
+   *  per-conversation "agent is typing" presence broadcast. */
+  onTyping?: () => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -133,6 +137,7 @@ export function MessageComposer({
   onOpenTemplates,
   replyTo,
   onClearReply,
+  onTyping,
 }: MessageComposerProps) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
@@ -140,6 +145,9 @@ export function MessageComposer({
   const [cannedPickerOpen, setCannedPickerOpen] = useState(false);
   const [noteMode, setNoteMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Throttles the typing broadcast to at most once per ~1.5s of active
+  // keystrokes, instead of on every single change event.
+  const lastTypingSentRef = useRef(0);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -263,8 +271,16 @@ export function MessageComposer({
       }
       setText(value);
       adjustHeight();
+
+      if (onTyping && value.trim().length > 0) {
+        const now = Date.now();
+        if (now - lastTypingSentRef.current > 1500) {
+          lastTypingSentRef.current = now;
+          onTyping();
+        }
+      }
     },
-    [adjustHeight]
+    [adjustHeight, onTyping]
   );
 
   const handleInsertCanned = useCallback((body: string) => {

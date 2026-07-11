@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/use-auth";
 import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
@@ -540,6 +541,83 @@ export function MessageThread({
     };
   }, [conversationId]);
 
+  // Collision detection: who else is currently viewing/typing in this
+  // conversation. First use of Supabase Realtime Presence (`.track()`) in
+  // the codebase — everything else here is `postgres_changes`, but this
+  // is genuinely ephemeral, per-conversation data with no reason to hit
+  // the DB. `presenceChannelRef` lets MessageComposer's onTyping callback
+  // broadcast on the same channel this effect owns.
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
+  const [viewingAgentIds, setViewingAgentIds] = useState<string[]>([]);
+  const [typingAgentIds, setTypingAgentIds] = useState<string[]>([]);
+  const typingClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    setViewingAgentIds([]);
+    setTypingAgentIds([]);
+    typingClearTimers.current.forEach((timer) => clearTimeout(timer));
+    typingClearTimers.current.clear();
+
+    if (!conversationId || !user?.id) {
+      presenceChannelRef.current = null;
+      return;
+    }
+    const supabase = createClient();
+    const channel = supabase.channel(`conv-presence:${conversationId}`, {
+      config: { presence: { key: user.id } },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        setViewingAgentIds(Object.keys(state).filter((id) => id !== user.id));
+      })
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const agentId = (payload as { user_id?: string })?.user_id;
+        if (!agentId || agentId === user.id) return;
+        setTypingAgentIds((prev) => (prev.includes(agentId) ? prev : [...prev, agentId]));
+        const timers = typingClearTimers.current;
+        const existing = timers.get(agentId);
+        if (existing) clearTimeout(existing);
+        timers.set(
+          agentId,
+          setTimeout(() => {
+            setTypingAgentIds((prev) => prev.filter((id) => id !== agentId));
+            timers.delete(agentId);
+          }, 3000),
+        );
+      })
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          channel.track({ user_id: user.id });
+        }
+      });
+
+    presenceChannelRef.current = channel;
+
+    return () => {
+      presenceChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId, user?.id]);
+
+  const handleTyping = useCallback(() => {
+    if (!user?.id || !presenceChannelRef.current) return;
+    presenceChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { user_id: user.id },
+    });
+  }, [user?.id]);
+
+  const collisionNames = useMemo(() => {
+    const nameFor = (id: string) => profiles.find((p) => p.user_id === id)?.full_name || id;
+    return {
+      viewing: viewingAgentIds.map(nameFor),
+      typing: typingAgentIds.map(nameFor),
+    };
+  }, [viewingAgentIds, typingAgentIds, profiles]);
+
   // Clear any in-progress reply draft when the active conversation changes —
   // a quote pulled from conversation A shouldn't bleed into conversation B.
   useEffect(() => {
@@ -798,11 +876,20 @@ export function MessageThread({
       const snoozedUntilIso =
         status === "snoozed" && snoozedUntil ? snoozedUntil.toISOString() : null;
 
-      const supabase = createClient();
-      await supabase
-        .from("conversations")
-        .update({ status, snoozed_until: snoozedUntilIso })
-        .eq("id", conversation.id);
+      // "closed" goes through a server route instead of a direct
+      // update — closing is the one status transition that can also
+      // fire a CSAT survey send (server-side only, see
+      // src/lib/conversations/close.ts). Every other status is still a
+      // plain client-side write.
+      if (status === "closed") {
+        await fetch(`/api/conversations/${conversation.id}/close`, { method: "POST" });
+      } else {
+        const supabase = createClient();
+        await supabase
+          .from("conversations")
+          .update({ status, snoozed_until: snoozedUntilIso })
+          .eq("id", conversation.id);
+      }
 
       onStatusChange(conversation.id, status, snoozedUntilIso);
     },
@@ -1007,6 +1094,7 @@ export function MessageThread({
       }
 
       onAssignChange(conversation.id, agentId);
+      void fetch(`/api/conversations/${conversation.id}/notify-assigned`, { method: "POST" });
     },
     [conversation, onAssignChange, t],
   );
@@ -1041,6 +1129,7 @@ export function MessageThread({
       }
 
       onAssignChange(conversation.id, agentId as string);
+      void fetch(`/api/conversations/${conversation.id}/notify-assigned`, { method: "POST" });
       const agentName =
         profiles.find((p) => p.user_id === agentId)?.full_name ?? String(agentId);
       toast.success(t("inbox.thread.roundRobinAssignedToast", { name: agentName }));
@@ -1480,6 +1569,15 @@ export function MessageThread({
         )}
       </div>
 
+      {/* Collision indicator: who else is here right now */}
+      {(collisionNames.typing.length > 0 || collisionNames.viewing.length > 0) && (
+        <div className="px-4 py-1 text-xs text-muted-foreground">
+          {collisionNames.typing.length > 0
+            ? t("inbox.thread.agentsTyping", { names: collisionNames.typing.join(", ") })
+            : t("inbox.thread.agentsViewing", { names: collisionNames.viewing.join(", ") })}
+        </div>
+      )}
+
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
@@ -1490,6 +1588,7 @@ export function MessageThread({
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
+        onTyping={handleTyping}
       />
 
       <TemplatePicker

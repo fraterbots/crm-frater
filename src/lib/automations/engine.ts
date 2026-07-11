@@ -16,6 +16,7 @@ import type {
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { closeConversationAndMaybeSendCsat } from '@/lib/conversations/close'
 
 // ------------------------------------------------------------
 // Public API
@@ -425,20 +426,18 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
-          .from('profiles')
-          .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+        if (!cfg.team_id) return 'round_robin needs a team_id'
+        const { data: pickedAgentId } = await db.rpc('pick_round_robin_agent', {
+          p_team_id: cfg.team_id,
+        })
+        agentId = pickedAgentId ?? undefined
       }
       if (!agentId) return 'no agent resolved'
+      const update: Record<string, string> = { assigned_agent_id: agentId }
+      if (cfg.mode === 'round_robin' && cfg.team_id) update.team_id = cfg.team_id
       await db
         .from('conversations')
-        .update({ assigned_agent_id: agentId })
+        .update(update)
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
       return `assigned to ${agentId}`
@@ -539,11 +538,14 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 
     case 'close_conversation': {
       if (!args.contactId) throw new Error('close_conversation needs a contact')
-      await db
+      const { data: conv } = await db
         .from('conversations')
-        .update({ status: 'closed', updated_at: new Date().toISOString() })
+        .select('id')
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
+        .maybeSingle()
+      if (!conv) return 'no conversation to close'
+      await closeConversationAndMaybeSendCsat(conv.id, args.automation.account_id)
       return 'conversation closed'
     }
 
@@ -637,6 +639,12 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
       const f = parse(from)
       const t = parse(to)
       return f <= t ? mins >= f && mins < t : mins >= f || mins < t
+    }
+    case 'business_hours': {
+      const { data } = await db.rpc('is_within_business_hours', {
+        p_account_id: args.automation.account_id,
+      })
+      return data === true
     }
     default:
       return false
