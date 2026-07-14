@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import { useAuth } from "@/hooks/use-auth";
+import { useWhatsAppStatus } from "@/hooks/use-whatsapp-status";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -47,9 +49,21 @@ export default function InboxPage() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
-    null
-  );
+  const { accountId } = useAuth();
+  // Single source of truth for "is WhatsApp actually connected", shared
+  // with the Settings overview tile (Fase 14) — replaces a naive read
+  // of the raw whatsapp_config.status column, which for an Evolution
+  // connection can flap to 'disconnected' during normal Baileys
+  // reconnect cycles and never got refreshed outside the Settings page.
+  // An account can have two channels configured at once (Fase 17/18,
+  // coexistence) — the banner only warns when NEITHER is working.
+  const { channels: whatsappChannels, anyConnected, loading: whatsappLoading } =
+    useWhatsAppStatus(accountId);
+  const whatsappConnected = whatsappLoading
+    ? null
+    : whatsappChannels.length === 0
+      ? false
+      : anyConnected;
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -169,46 +183,6 @@ export default function InboxPage() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
-
-  // Check WhatsApp connection status on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
-
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
-
-      setWhatsappConnected(data?.status === "connected");
-    };
-
-    checkConnection();
   }, []);
 
   // Handle realtime message events

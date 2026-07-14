@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { sendOutboundText } from '@/lib/whatsapp/send-text'
+import { resolveChannelForConversation } from '@/lib/whatsapp/resolve-channel'
 import { dispatchWebhooks } from '@/lib/webhooks/dispatch'
 
 /**
@@ -40,11 +41,15 @@ export async function closeConversationAndMaybeSendCsat(
     contact_id: conversation.contact_id,
   })
 
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('csat_enabled, csat_message')
-    .eq('account_id', accountId)
-    .maybeSingle()
+  // Resolved by the conversation's own channel — not a bare account_id
+  // lookup — since csat_enabled/csat_message live on whatsapp_config
+  // and an account can have two rows (Meta + Evolution) since Fase 17.
+  let config: Awaited<ReturnType<typeof resolveChannelForConversation>> | null = null
+  try {
+    config = await resolveChannelForConversation(conversationId)
+  } catch {
+    config = null
+  }
   if (!config?.csat_enabled || !config.csat_message) return
 
   try {

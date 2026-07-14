@@ -1,5 +1,6 @@
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { sendOutboundText } from '@/lib/whatsapp/send-text'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -43,8 +44,22 @@ interface SendTemplateArgs {
   params?: string[]
 }
 
+/**
+ * Provider-aware — routes through sendOutboundText (src/lib/whatsapp/
+ * send-text.ts), which resolves the conversation's bound channel and
+ * works for both Meta and Evolution accounts. Before Fase 17 this used
+ * the Meta-only sendViaMeta below, silently breaking every automation
+ * on an Evolution-only account (decrypt(null) on a NULL access_token).
+ */
 export async function engineSendText(args: SendTextArgs): Promise<{ whatsapp_message_id: string }> {
-  return sendViaMeta({ ...args, kind: 'text' })
+  const sent = await sendOutboundText({
+    accountId: args.accountId,
+    conversationId: args.conversationId,
+    contactId: args.contactId,
+    text: args.text,
+  })
+  if (!sent) throw new Error('WhatsApp not configured for this account')
+  return { whatsapp_message_id: sent.whatsappMessageId }
 }
 
 export async function engineSendTemplate(
@@ -83,10 +98,16 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
+  // Templates are a Meta-only concept — this function is only reached
+  // via engineSendTemplate now (see engineSendText above), so always
+  // resolve the account's Meta row specifically. An account can also
+  // have an Evolution row configured since Fase 17, which would make a
+  // bare `.eq('account_id', ...).single()` throw.
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', input.accountId)
+    .eq('provider', 'meta_cloud')
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')

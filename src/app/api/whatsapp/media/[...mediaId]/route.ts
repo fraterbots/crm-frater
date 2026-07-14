@@ -102,11 +102,16 @@ export async function GET(
     }
 
     // Meta-sourced media: mediaId is Meta's raw media id — proxy it
-    // live from the Graph API using this account's saved token.
+    // live from the Graph API using this account's saved token. Always
+    // the Meta row specifically (an account can also have an Evolution
+    // channel configured since Fase 17 — this code path only ever
+    // handles raw Meta media ids, never reached for `evolution:`-
+    // prefixed ones, so there's no conversation context to resolve by).
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)
+      .eq('provider', 'meta_cloud')
       .single()
 
     if (configError || !config) {

@@ -42,7 +42,6 @@ type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 // feature scoped; strings below intentionally match this file's
 // existing hardcoded-English convention rather than introducing a
 // half-i18n'd file.
-type Provider = 'meta_cloud' | 'evolution';
 
 export function WhatsAppConfig() {
   const supabase = createClient();
@@ -58,11 +57,13 @@ export function WhatsAppConfig() {
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  // Always the Meta row specifically — an account can also have a
+  // separate Evolution row configured at the same time since Fase 17
+  // (coexistence), tracked independently below.
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
-  // Independent of `config` so a brand-new account (no saved row yet)
-  // can still pick "Não-oficial" before anything exists to load.
-  // Synced from `config?.provider` once a row loads (see fetchConfig).
-  const [provider, setProvider] = useState<Provider>('meta_cloud');
+  // Evolution's own row, fetched alongside the Meta one so both panels
+  // can render simultaneously instead of the old exclusive toggle.
+  const [evolutionStatus, setEvolutionStatus] = useState<'connected' | 'disconnected'>('disconnected');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -101,25 +102,33 @@ export function WhatsAppConfig() {
   const fetchConfig = useCallback(async (acctId: string) => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
-      const { data, error } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', acctId)
-        .maybeSingle();
+      // Load form values from Supabase (shows what's in DB). Always
+      // the Meta row specifically — an account can also have a
+      // separate Evolution row configured since Fase 17 (coexistence),
+      // fetched independently right below instead of sharing this
+      // query the way the old exclusive-toggle model did.
+      const [{ data, error }, { data: evoRow }] = await Promise.all([
+        supabase
+          .from('whatsapp_config')
+          .select('*')
+          .eq('account_id', acctId)
+          .eq('provider', 'meta_cloud')
+          .maybeSingle(),
+        supabase
+          .from('whatsapp_config')
+          .select('status')
+          .eq('account_id', acctId)
+          .eq('provider', 'evolution')
+          .maybeSingle(),
+      ]);
 
       if (error) {
         console.error('Failed to load config row:', error);
       }
+      setEvolutionStatus(evoRow?.status === 'connected' ? 'connected' : 'disconnected');
 
       if (data) {
         setConfig(data);
-        setProvider((data.provider as Provider) ?? 'meta_cloud');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -138,11 +147,8 @@ export function WhatsAppConfig() {
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta).
-      // Only meaningful for a meta_cloud row — an evolution row has no
-      // access_token to decrypt, and its own connect panel handles its
-      // own status via /api/whatsapp/evolution/status.
-      if (data && data.provider !== 'evolution') {
+      // Verify health via the API (decrypts token + pings Meta).
+      if (data) {
         try {
           const res = await fetch('/api/whatsapp/config', { method: 'GET' });
           const payload = await res.json();
@@ -399,45 +405,15 @@ export function WhatsAppConfig() {
         description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
       />
 
-      {/* Connection type selector */}
-      <div
-        role="radiogroup"
-        aria-label="Connection type"
-        className="mb-6 grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2"
-      >
-        {(
-          [
-            { id: 'meta_cloud' as const, title: 'Oficial (Cloud API)', desc: 'Meta Business, número verificado' },
-            { id: 'evolution' as const, title: 'Não-oficial (WhatsApp Web)', desc: 'QR code, sem aprovação da Meta' },
-          ]
-        ).map((opt) => (
-          <button
-            key={opt.id}
-            type="button"
-            role="radio"
-            aria-checked={provider === opt.id}
-            onClick={() => setProvider(opt.id)}
-            className={`rounded-lg border p-3 text-left transition-colors ${
-              provider === opt.id
-                ? 'border-primary bg-primary/10'
-                : 'border-border bg-card hover:border-primary/40'
-            }`}
-          >
-            <p className="text-sm font-medium text-foreground">{opt.title}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{opt.desc}</p>
-          </button>
-        ))}
-      </div>
+      {/* Both channels are always shown and configured independently —
+          an account can run a Meta connection and an Evolution
+          connection at the same time (Fase 18, coexistence). This
+          replaced an exclusive "Oficial / Não-oficial" toggle that
+          only ever let one exist. */}
+      <h3 className="mb-4 text-sm font-semibold text-foreground">
+        Oficial (Meta Cloud API)
+      </h3>
 
-      {provider === 'evolution' ? (
-        <div className="space-y-6">
-          {isOwner && <EvolutionPlatformSettings />}
-          <EvolutionConnectPanel
-            isCurrentProvider={config?.provider === 'evolution'}
-            initialStatus={config?.provider === 'evolution' ? config?.status : undefined}
-          />
-        </div>
-      ) : (
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
@@ -898,7 +874,17 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
-      )}
+
+      <h3 className="mb-4 mt-10 text-sm font-semibold text-foreground">
+        Não-oficial (WhatsApp Web)
+      </h3>
+      <div className="space-y-6">
+        {isOwner && <EvolutionPlatformSettings />}
+        <EvolutionConnectPanel
+          isCurrentProvider
+          initialStatus={evolutionStatus}
+        />
+      </div>
     </section>
   );
 }

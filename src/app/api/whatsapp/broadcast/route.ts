@@ -134,10 +134,15 @@ export async function POST(request: Request) {
       )
     }
 
+    // Broadcasts are template-based, and templates are a Meta-only
+    // concept (Evolution/WhatsApp Web has no template approval flow) —
+    // always the account's Meta row specifically, since it can also
+    // have an Evolution row configured (Fase 17, coexistence).
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
       .eq('account_id', accountId)
+      .eq('provider', 'meta_cloud')
       .single()
 
     if (configError || !config) {

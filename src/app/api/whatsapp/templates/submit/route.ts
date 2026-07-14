@@ -149,10 +149,14 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
+      // Templates are Meta-only — always the account's Meta row
+      // specifically, since it can also have an Evolution row
+      // configured (Fase 17, coexistence).
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('provider', 'meta_cloud')
         .single()
       if (configError || !config) {
         return NextResponse.json(

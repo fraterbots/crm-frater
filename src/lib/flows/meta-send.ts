@@ -77,10 +77,14 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
+  // Meta-only file (interactive buttons/lists don't exist on Evolution)
+  // — always resolve the account's Meta row specifically, since it can
+  // now also have an Evolution row configured (Fase 17, coexistence).
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', args.accountId)
+    .eq('provider', 'meta_cloud')
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
@@ -186,10 +190,14 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
+  // Meta-only file (interactive buttons/lists don't exist on Evolution)
+  // — always resolve the account's Meta row specifically, since it can
+  // now also have an Evolution row configured (Fase 17, coexistence).
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', args.accountId)
+    .eq('provider', 'meta_cloud')
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
@@ -338,10 +346,14 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
+  // Interactive buttons/lists are a Meta-only concept — always resolve
+  // the account's Meta row specifically, since it can now also have an
+  // Evolution row configured (Fase 17, coexistence).
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', input.accountId)
+    .eq('provider', 'meta_cloud')
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')

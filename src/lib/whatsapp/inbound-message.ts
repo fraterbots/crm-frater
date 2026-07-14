@@ -91,6 +91,15 @@ export async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
+  // Which whatsapp_config row received the inbound message that
+  // triggered this call — both webhooks already resolve this before
+  // calling in (Meta by phone_number_id, Evolution by
+  // evolution_webhook_secret), so a brand-new conversation can be bound
+  // to its channel with no extra lookup. An existing conversation found
+  // below keeps whichever channel it already has (see 043's "same
+  // contact, both channels" note — reusing one conversation is
+  // inherited behavior, not changed here).
+  whatsappConfigId: string,
 ): Promise<ConversationRow | null> {
   const { data: existing, error: findError } = await supabaseAdmin()
     .from('conversations')
@@ -112,6 +121,7 @@ export async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      whatsapp_config_id: whatsappConfigId,
       ...slaFields,
     })
     .select()

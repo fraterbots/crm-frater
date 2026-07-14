@@ -85,10 +85,14 @@ export async function GET() {
       )
     }
 
+    // This route/form is Meta-only — always the account's Meta row
+    // specifically, since it can also have an Evolution row configured
+    // (Fase 17, coexistence).
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('phone_number_id, access_token, status')
       .eq('account_id', accountId)
+      .eq('provider', 'meta_cloud')
       .maybeSingle()
 
     if (configError) {
@@ -276,6 +280,7 @@ export async function POST(request: Request) {
       .from('whatsapp_config')
       .select('id, registered_at, phone_number_id')
       .eq('account_id', accountId)
+      .eq('provider', 'meta_cloud')
       .maybeSingle()
 
     const sameNumber =
@@ -354,6 +359,7 @@ export async function POST(request: Request) {
     // store the credentials and the error so the UI can guide the
     // user through a retry.
     const baseRow = {
+      provider: 'meta_cloud',
       phone_number_id,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,
@@ -367,10 +373,14 @@ export async function POST(request: Request) {
     }
 
     if (existing) {
+      // Scoped to the Meta row specifically — the account may also
+      // have a separate Evolution row (Fase 17, coexistence), which
+      // must never be touched by this Meta-only save.
       const { error: updateError } = await supabase
         .from('whatsapp_config')
         .update(baseRow)
         .eq('account_id', accountId)
+        .eq('provider', 'meta_cloud')
 
       if (updateError) {
         console.error('Error updating whatsapp_config:', updateError)
@@ -459,10 +469,13 @@ export async function DELETE() {
       )
     }
 
+    // Resetting the Meta form must never delete a separate Evolution
+    // row on the same account (Fase 17, coexistence).
     const { error: deleteError } = await supabase
       .from('whatsapp_config')
       .delete()
       .eq('account_id', accountId)
+      .eq('provider', 'meta_cloud')
 
     if (deleteError) {
       console.error('Error deleting whatsapp_config:', deleteError)

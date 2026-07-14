@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { sendTextMessage as metaSendTextMessage } from '@/lib/whatsapp/meta-api'
 import { sendTextMessage as evolutionSendTextMessage } from '@/lib/whatsapp/evolution-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveChannelForConversation } from '@/lib/whatsapp/resolve-channel'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -12,11 +13,12 @@ import {
 /**
  * Provider-agnostic plain-text sender for server-side flows that aren't
  * a direct agent action from the composer (CSAT survey/thank-you —
- * Fase 12). Mirrors src/lib/automations/meta-send.ts's shape but
- * branches on `whatsapp_config.provider`, since that file predates the
- * Evolution integration and is Meta-only. Always uses the service-role
- * client — callers may be a cron-adjacent route or the automations
- * engine, neither of which has a session.
+ * Fase 12; also used by automations' engineSendText since Fase 17).
+ * Mirrors src/lib/automations/meta-send.ts's shape but branches on
+ * `whatsapp_config.provider`, since that file predates the Evolution
+ * integration and is Meta-only. Always uses the service-role client —
+ * callers may be a cron-adjacent route or the automations engine,
+ * neither of which has a session.
  */
 export async function sendOutboundText(args: {
   accountId: string
@@ -37,12 +39,7 @@ export async function sendOutboundText(args: {
     .maybeSingle()
   if (!contact?.phone) return null
 
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .maybeSingle()
-  if (!config) return null
+  const config = await resolveChannelForConversation(conversationId)
 
   let waMessageId = ''
 

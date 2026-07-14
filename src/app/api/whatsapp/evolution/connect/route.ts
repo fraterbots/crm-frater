@@ -71,10 +71,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 502 })
   }
 
+  // Look up an existing Evolution row specifically — an account can
+  // also have a separate Meta row configured at the same time (Fase
+  // 17, coexistence), which this save must never touch.
   const { data: existing } = await supabase
     .from('whatsapp_config')
     .select('id')
     .eq('account_id', accountId)
+    .eq('provider', 'evolution')
     .maybeSingle()
 
   const row = {
@@ -85,11 +89,6 @@ export async function POST(request: Request) {
     evolution_instance_token: encrypt(created.instanceToken),
     evolution_webhook_secret: webhookSecret,
     status: 'disconnected' as const,
-    // Meta-only columns are irrelevant for this row — leaving them
-    // untouched on update (if switching an existing row's provider,
-    // stale Meta values just go unused) rather than nulling them out,
-    // so switching back to 'meta_cloud' later doesn't lose the saved
-    // Meta credentials.
   }
 
   const { error: saveError } = existing

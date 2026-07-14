@@ -204,14 +204,22 @@ export async function POST(
   const event = String(body.event ?? '').toUpperCase().replace(/\./g, '_')
 
   if (event === 'CONNECTION_UPDATE') {
+    // Baileys cycles through 'connecting' routinely during normal
+    // keepalive/reconnect — that is NOT a disconnection. Only 'close'
+    // means the session actually dropped. Writing 'disconnected' on
+    // every non-'open' state made whatsapp_config.status flap
+    // constantly, which the inbox banner (before Fase 14) took at
+    // face value and showed a false "not connected" warning.
     const state = body.data?.state as string | undefined
-    if (state) {
+    if (state === 'open') {
       await supabaseAdmin()
         .from('whatsapp_config')
-        .update({
-          status: state === 'open' ? 'connected' : 'disconnected',
-          ...(state === 'open' ? { connected_at: new Date().toISOString() } : {}),
-        })
+        .update({ status: 'connected', connected_at: new Date().toISOString() })
+        .eq('id', config.id)
+    } else if (state === 'close') {
+      await supabaseAdmin()
+        .from('whatsapp_config')
+        .update({ status: 'disconnected' })
         .eq('id', config.id)
     }
     return NextResponse.json({ ok: true })
@@ -258,6 +266,7 @@ export async function POST(
     config.account_id,
     config.user_id,
     contactOutcome.contact.id,
+    config.id,
   )
   if (!conversation) return NextResponse.json({ ok: true })
 

@@ -18,50 +18,66 @@ interface CsatResponseRow {
   created_at: string;
 }
 
+interface ChannelRow {
+  id: string;
+  provider: 'meta_cloud' | 'evolution';
+  csat_enabled: boolean;
+  csat_message: string | null;
+}
+
 const DEFAULT_MESSAGE =
   'Como você avalia nosso atendimento? Responda com um número de 1 (ruim) a 5 (ótimo).';
 
+const PROVIDER_LABEL: Record<ChannelRow['provider'], string> = {
+  meta_cloud: 'Oficial (Meta Cloud API)',
+  evolution: 'Não-oficial (WhatsApp Web)',
+};
+
 /**
- * CSAT toggle + survey message (stored on whatsapp_config — the
- * per-account WhatsApp channel config, migration 041) plus a simple
- * report over `csat_responses`. Ratings are captured by
- * src/lib/whatsapp/inbound-message.ts when a conversation flagged
- * `awaiting_csat` gets a 1-5 reply.
+ * CSAT toggle + survey message, configured PER CHANNEL — an account
+ * can have up to two whatsapp_config rows (Meta + Evolution) since
+ * Fase 17/18 (coexistence), and closeConversationAndMaybeSendCsat
+ * (src/lib/conversations/close.ts) now resolves csat_enabled/
+ * csat_message via the CONVERSATION's own channel, not a bare
+ * account-wide row. The satisfaction report below stays account-wide
+ * (aggregated across every channel's responses).
  */
 export function CsatManager() {
   const supabase = createClient();
   const { accountId } = useAuth();
   const { t } = useTranslation();
 
-  const [configured, setConfigured] = useState(true);
-  const [enabled, setEnabled] = useState(false);
-  const [message, setMessage] = useState(DEFAULT_MESSAGE);
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, { enabled: boolean; message: string }>>({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [responses, setResponses] = useState<CsatResponseRow[]>([]);
 
   const fetchAll = useCallback(async () => {
     if (!accountId) return;
     setLoading(true);
-    const [configRes, responsesRes] = await Promise.all([
+    const [channelsRes, responsesRes] = await Promise.all([
       supabase
         .from('whatsapp_config')
-        .select('csat_enabled, csat_message')
-        .eq('account_id', accountId)
-        .maybeSingle(),
+        .select('id, provider, csat_enabled, csat_message')
+        .eq('account_id', accountId),
       supabase
         .from('csat_responses')
         .select('id, rating, created_at')
         .order('created_at', { ascending: false })
         .limit(50),
     ]);
-    if (!configRes.data) {
-      setConfigured(false);
-    } else {
-      setConfigured(true);
-      setEnabled(configRes.data.csat_enabled ?? false);
-      setMessage(configRes.data.csat_message || DEFAULT_MESSAGE);
-    }
+
+    const rows = (channelsRes.data as ChannelRow[] | null) ?? [];
+    setChannels(rows);
+    setDrafts(
+      Object.fromEntries(
+        rows.map((row) => [
+          row.id,
+          { enabled: row.csat_enabled, message: row.csat_message || DEFAULT_MESSAGE },
+        ]),
+      ),
+    );
     setResponses((responsesRes.data as CsatResponseRow[] | null) ?? []);
     setLoading(false);
   }, [supabase, accountId]);
@@ -73,14 +89,15 @@ export function CsatManager() {
     }
   }, [accountId, fetchAll]);
 
-  async function handleSave() {
-    if (!accountId) return;
-    setSaving(true);
+  async function handleSave(channelId: string) {
+    const draft = drafts[channelId];
+    if (!draft) return;
+    setSavingId(channelId);
     const { error } = await supabase
       .from('whatsapp_config')
-      .update({ csat_enabled: enabled, csat_message: message })
-      .eq('account_id', accountId);
-    setSaving(false);
+      .update({ csat_enabled: draft.enabled, csat_message: draft.message })
+      .eq('id', channelId);
+    setSavingId(null);
     if (error) {
       toast.error(t('settings.csat.errorSave'));
       return;
@@ -104,7 +121,7 @@ export function CsatManager() {
           <Loader2 className="size-4 animate-spin" />
           {t('settings.csat.loading')}
         </div>
-      ) : !configured ? (
+      ) : channels.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
             {t('settings.csat.notConfigured')}
@@ -112,31 +129,52 @@ export function CsatManager() {
         </Card>
       ) : (
         <div className="space-y-4">
-          <Card>
-            <CardContent className="space-y-3">
-              <label className="flex items-center gap-2">
-                <Checkbox checked={enabled} onCheckedChange={() => setEnabled((e) => !e)} />
-                <span className="text-sm text-foreground">{t('settings.csat.enable')}</span>
-              </label>
-              <Textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                rows={3}
-                className="bg-muted text-foreground"
-                placeholder={DEFAULT_MESSAGE}
-              />
-              <div className="flex justify-end">
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {saving && <Loader2 className="size-4 animate-spin" />}
-                  {t('settings.csat.save')}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          {channels.map((channel) => {
+            const draft = drafts[channel.id] ?? { enabled: false, message: DEFAULT_MESSAGE };
+            return (
+              <Card key={channel.id}>
+                <CardContent className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">
+                    {PROVIDER_LABEL[channel.provider]}
+                  </p>
+                  <label className="flex items-center gap-2">
+                    <Checkbox
+                      checked={draft.enabled}
+                      onCheckedChange={() =>
+                        setDrafts((prev) => ({
+                          ...prev,
+                          [channel.id]: { ...draft, enabled: !draft.enabled },
+                        }))
+                      }
+                    />
+                    <span className="text-sm text-foreground">{t('settings.csat.enable')}</span>
+                  </label>
+                  <Textarea
+                    value={draft.message}
+                    onChange={(e) =>
+                      setDrafts((prev) => ({
+                        ...prev,
+                        [channel.id]: { ...draft, message: e.target.value },
+                      }))
+                    }
+                    rows={3}
+                    className="bg-muted text-foreground"
+                    placeholder={DEFAULT_MESSAGE}
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={() => handleSave(channel.id)}
+                      disabled={savingId === channel.id}
+                      className="bg-primary text-primary-foreground hover:bg-primary/90"
+                    >
+                      {savingId === channel.id && <Loader2 className="size-4 animate-spin" />}
+                      {t('settings.csat.save')}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
 
           <Card>
             <CardContent className="space-y-3">

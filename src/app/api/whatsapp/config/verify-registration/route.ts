@@ -55,10 +55,14 @@ export async function GET() {
     })
   }
 
+  // Registration verification is a Meta-only concept — always the
+  // account's Meta row specifically, since it can also have an
+  // Evolution row configured (Fase 17, coexistence).
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)
+    .eq('provider', 'meta_cloud')
     .maybeSingle()
 
   if (!config) {

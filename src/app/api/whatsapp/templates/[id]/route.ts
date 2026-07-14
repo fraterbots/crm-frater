@@ -138,10 +138,14 @@ export async function PATCH(
     }
 
     if (!isDryRun()) {
+      // Templates are Meta-only — always the account's Meta row
+      // specifically, since it can also have an Evolution row
+      // configured (Fase 17, coexistence).
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('provider', 'meta_cloud')
         .single()
       if (configError || !config) {
         return NextResponse.json(
@@ -278,10 +282,14 @@ export async function DELETE(
     }
 
     if (existing.meta_template_id && !isDryRun()) {
+      // Templates are Meta-only — always the account's Meta row
+      // specifically, since it can also have an Evolution row
+      // configured (Fase 17, coexistence).
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('account_id', accountId)
+        .eq('provider', 'meta_cloud')
         .single()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(

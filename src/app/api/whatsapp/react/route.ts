@@ -4,6 +4,7 @@ import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { sendReaction as evolutionSendReaction } from '@/lib/whatsapp/evolution-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
+import { resolveChannelForConversation } from '@/lib/whatsapp/resolve-channel';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -109,16 +110,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // WhatsApp config. Account-scoped post-multi-user. Full row (not
-    // just phone_number_id/access_token) since the Evolution branch
-    // below needs its own provider-specific columns instead.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single();
+    // WhatsApp channel for this conversation — resolved by conversation,
+    // not bare account_id, since an account can have both a Meta and an
+    // Evolution channel configured at once (Fase 17, coexistence).
+    let config: Awaited<ReturnType<typeof resolveChannelForConversation>> | null = null;
+    try {
+      config = await resolveChannelForConversation(conversation.id);
+    } catch {
+      config = null;
+    }
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured.' },
         { status: 400 },

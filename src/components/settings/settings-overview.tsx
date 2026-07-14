@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { SECTION_META, type SettingsSection } from './settings-sections';
 import { SettingsChip, StatusDot } from './settings-chip';
 import { ROLE_META } from './role-meta';
+import { useWhatsAppStatus } from '@/hooks/use-whatsapp-status';
 
 interface OverviewCounts {
   members: number | null;
@@ -25,12 +26,6 @@ interface OverviewCounts {
   templatesPending: number | null;
   tags: number | null;
   customFields: number | null;
-}
-
-interface WhatsAppStatus {
-  configured: boolean;
-  connected: boolean;
-  provider: 'meta_cloud' | 'evolution' | null;
 }
 
 export function SettingsOverview({
@@ -45,19 +40,20 @@ export function SettingsOverview({
 
   const [counts, setCounts] = useState<OverviewCounts | null>(null);
   const [countsLoading, setCountsLoading] = useState(true);
-  // WhatsApp status is tracked separately: its health check decrypts the
-  // token and pings Meta, which is far slower than the cheap count
-  // queries. Gating it independently keeps a slow/flaky Meta round-trip
-  // from blanking the rest of the landing.
-  const [whatsapp, setWhatsapp] = useState<WhatsAppStatus | null>(null);
-  const [whatsappLoading, setWhatsappLoading] = useState(true);
+  // WhatsApp status is tracked separately from the cheap counts below —
+  // its health check decrypts a token / pings a live API, far slower
+  // than a count query. Gating it independently (own hook, own loading
+  // flag) keeps a slow/flaky round-trip from blanking the rest of the
+  // landing. Single source of truth shared with the inbox banner (Fase 14).
+  // An account can have up to two channels configured at once since
+  // Fase 17/18 (coexistence) — the tile lists one line per channel.
+  const { channels: whatsappChannels, loading: whatsappLoading } = useWhatsAppStatus(accountId);
 
   useEffect(() => {
     if (!user || !accountId) return;
     let cancelled = false;
     const supabase = createClient();
     const userId = user.id;
-    const acctId = accountId;
 
     // Cheap counts — resolve fast, render immediately.
     (async () => {
@@ -117,40 +113,6 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
-    // WhatsApp connection status — slower, independent. The health
-    // endpoint depends on which provider the row is on (an 'evolution'
-    // row has no access_token, so the Meta health-check would try to
-    // decrypt null and error) — fetch the row first, then pick.
-    (async () => {
-      setWhatsappLoading(true);
-      const row = await supabase
-        .from('whatsapp_config')
-        .select('phone_number_id, provider')
-        .eq('account_id', acctId)
-        .maybeSingle();
-      if (cancelled) return;
-
-      const provider = (row.data?.provider as 'meta_cloud' | 'evolution' | undefined) ?? null;
-      const configured =
-        provider === 'evolution' ? !!row.data : !!row.data?.phone_number_id;
-
-      if (!configured) {
-        setWhatsapp({ configured: false, connected: false, provider: null });
-        setWhatsappLoading(false);
-        return;
-      }
-
-      const healthUrl =
-        provider === 'evolution' ? '/api/whatsapp/evolution/status' : '/api/whatsapp/config';
-      const health = await fetch(healthUrl, { cache: 'no-store' })
-        .then((r) => r.json())
-        .catch(() => null);
-      if (cancelled) return;
-
-      setWhatsapp({ configured: true, connected: !!health?.connected, provider });
-      setWhatsappLoading(false);
-    })();
-
     return () => {
       cancelled = true;
     };
@@ -177,23 +139,29 @@ export function SettingsOverview({
     {
       section: 'whatsapp',
       loading: whatsappLoading,
-      subtitle: !whatsapp?.configured ? (
-        t('settings.overview.whatsappNotSetUp')
-      ) : whatsapp.connected ? (
-        <>
-          <StatusDot tone="ok" /> {t('settings.overview.whatsappConnected')}
-          {' · '}
-          {t(
-            whatsapp.provider === 'evolution'
-              ? 'settings.overview.whatsappProviderEvolution'
-              : 'settings.overview.whatsappProviderMeta',
-          )}
-        </>
-      ) : (
-        <>
-          <StatusDot tone="muted" /> {t('settings.overview.whatsappNeedsReconnect')}
-        </>
-      ),
+      subtitle:
+        whatsappChannels.length === 0 ? (
+          t('settings.overview.whatsappNotSetUp')
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {whatsappChannels.map((channel) => (
+              <span key={channel.provider}>
+                <StatusDot tone={channel.connected ? 'ok' : 'muted'} />{' '}
+                {t(
+                  channel.connected
+                    ? 'settings.overview.whatsappConnected'
+                    : 'settings.overview.whatsappNeedsReconnect',
+                )}
+                {' · '}
+                {t(
+                  channel.provider === 'evolution'
+                    ? 'settings.overview.whatsappProviderEvolution'
+                    : 'settings.overview.whatsappProviderMeta',
+                )}
+              </span>
+            ))}
+          </div>
+        ),
     },
     {
       section: 'members',

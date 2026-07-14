@@ -28,6 +28,7 @@ import {
 import type { MessageTemplate } from '@/types'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
 import { dispatchWebhooks } from '@/lib/webhooks/dispatch'
+import { resolveChannelForConversation } from '@/lib/whatsapp/resolve-channel'
 
 export async function POST(request: Request) {
   try {
@@ -172,14 +173,18 @@ export async function POST(request: Request) {
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // Resolve which channel (Meta or Evolution) this conversation is
+    // bound to — an account can have both configured since Fase 17, so
+    // a bare `.eq('account_id', accountId).single()` would throw the
+    // moment a second row exists.
+    let config: Awaited<ReturnType<typeof resolveChannelForConversation>> | null = null
+    try {
+      config = await resolveChannelForConversation(conversation_id)
+    } catch {
+      config = null
+    }
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured. Please set up your WhatsApp integration first.' },
         { status: 400 }
