@@ -246,7 +246,15 @@ export async function POST(
     return NextResponse.json({ ok: true })
   }
 
-  const phone = normalizePhone(remoteJid.replace('@s.whatsapp.net', ''))
+  // A JID's user part can carry a linked-device suffix (e.g.
+  // "5511987654321:14@s.whatsapp.net" instead of the bare
+  // "5511987654321@s.whatsapp.net") — WhatsApp attaches this when the
+  // sender has companion devices, and it varies across sessions/
+  // reconnects. Without stripping it, normalizePhone would fold those
+  // device-id digits into the phone number, producing a different
+  // "phone" per device and creating a brand-new duplicate contact for
+  // the same real person every time the suffix changed.
+  const phone = normalizePhone(remoteJid.replace('@s.whatsapp.net', '').split(':')[0])
   const msg = data?.message ?? {}
 
   // For a fromMe event, Evolution's pushName is the ACCOUNT OWNER's
