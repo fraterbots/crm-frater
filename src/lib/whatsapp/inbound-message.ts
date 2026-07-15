@@ -101,12 +101,15 @@ export async function findOrCreateConversation(
   // inherited behavior, not changed here).
   whatsappConfigId: string,
 ): Promise<ConversationRow | null> {
+  // maybeSingle (not single): a contact having ZERO conversations must
+  // not error out here — that's the normal "about to create the first
+  // one" case, not a failure.
   const { data: existing, error: findError } = await supabaseAdmin()
     .from('conversations')
     .select('*')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
-    .single()
+    .maybeSingle()
 
   if (!findError && existing) {
     return existing
@@ -128,6 +131,22 @@ export async function findOrCreateConversation(
     .single()
 
   if (createError) {
+    // Lost a race: two inbound deliveries for the same contact hit
+    // this function concurrently (Evolution/Baileys can fire several
+    // MESSAGES_UPSERT events in quick succession), both saw zero
+    // existing rows, and the UNIQUE(account_id, contact_id) constraint
+    // (migration 045) rejected the second insert. Re-resolve the
+    // now-existing row instead of dropping the message — mirrors
+    // findOrCreateContact's identical race guard above.
+    if (isUniqueViolation(createError)) {
+      const { data: raced } = await supabaseAdmin()
+        .from('conversations')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .maybeSingle()
+      if (raced) return raced
+    }
     console.error('Error creating conversation:', createError)
     return null
   }
